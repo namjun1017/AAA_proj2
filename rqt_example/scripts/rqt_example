@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+import sys
+
+from rqt_gui.main import Main
+
+from rqt_example.examples import Examples
+
+plugin = "rqt_example.examples.Examples"
+main = Main(filename=plugin)
+sys.exit(main.main(standalone=plugin))
