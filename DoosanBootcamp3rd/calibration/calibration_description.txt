@@ -1,0 +1,12 @@
+##Calibration_Description
+
+data_recording.py는 doosan-robot2/dsr_rokey/rokey/rokey/basic/data_recording.py에도 있음
+ros2 run rokey data_recording으로 실행 가능(코드 내부에 있는 절대 경로 수정하기)
+Data폴더가 생성되면 calibration 파이썬 파일과 동일한 디렉토리로 옮기기
+
+- calibrateHandEye_final.py : eye-in-hand calibration 코드
+- eye2hand_calibration.py : eye-to-hand calibration 코드
+
+각 파일 실행 시 T_a2b.npy가 생성됨(ex. T_cam2base.npy)
+np.load('your npy file path')로 불러올 수 있음
+
