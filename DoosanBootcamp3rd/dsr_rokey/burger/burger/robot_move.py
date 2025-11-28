@@ -5,13 +5,16 @@ from scipy.spatial.transform import Rotation
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile
 import DR_init
+from collections import Counter, deque
 
 from od_msg.srv import SrvDepthPosition
 from ament_index_python.packages import get_package_share_directory
-from pick_and_place_text.onrobot import RG
+from burger.onrobot import RG
+from order_interfaces.msg import Order 
 
-package_path = get_package_share_directory("pick_and_place_text")
+package_path = get_package_share_directory("burger")
 
 # --- [수정된 부분 1] ---
 # [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
@@ -52,6 +55,22 @@ gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
 class RobotController(Node):
     def __init__(self):
         super().__init__("pick_and_place")
+
+        # 🚨 [추가] 메뉴 DB 및 매핑 정의
+        self.menu_db = {
+            "불고기버거": ["빵", "불고기", "상추", "토마토", "빵"],
+            "치즈버거": ["빵", "불고기", "치즈", "빵"],
+            "새우버거": ["빵", "새우", "상추", "빵"],
+        }
+        
+        self.ingredient_map = {
+            "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce", 
+            "토마토": "tomato", "새우": "shrimp", "bun_top": "bun_top" 
+        }
+        
+        # 🚨 [추가] 작업 큐 초기화
+        self.pending_tasks = [] 
+
         self.init_robot()
         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
         while not self.depth_client.wait_for_service(timeout_sec=3.0):
