@@ -36,6 +36,7 @@ ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
 BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
 COUNTER_POS = [300, 100.6, 50, 115, 180, 115]
+INGREDIENT_THICKNESS = 50
 
 
 DR_init.__dsr__id = ROBOT_ID
@@ -314,9 +315,10 @@ class RobotController(Node):
                 td_coord[2] = max(td_coord[2], 2)
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-                target_pos[2] = BUCKET_POS[2] + idx * INGREDIENT_THICKNESS
+                counter_pos = COUNTER_POS.copy()
+                counter_pos[2] += idx * INGREDIENT_THICKNESS
 
-                self.pick_and_place_target(target_pos)
+                self.pick_and_place_target(target_pos,counter_pos)
                 self.init_robot()
 
             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
@@ -330,7 +332,7 @@ class RobotController(Node):
         gripper.open_gripper()
         mwait()
 
-    def pick_and_place_target(self, target_pos):
+    def pick_and_place_target(self, target_pos, counter_pos):
         # target_pos: [x, y, z, rx, ry, rz]
 
         # 1) 위에서 한 번 대기하는 위치 (베이스 좌표계 z만 +100 mm)
@@ -355,11 +357,16 @@ class RobotController(Node):
         movel(pick_pos_above, vel=VELOCITY/2, acc=ACC/2)
         mwait()
 
+        counter_pos_above = counter_pos.copy()
+        counter_pos_above[2] += 100.0
+ 
         # 5) 카운터로 이동해서 내려놓기
-        movel(COUNTER_POS, vel=VELOCITY, acc=ACC)
+        movel(counter_pos_above, vel=VELOCITY/2, acc=ACC/2)
         mwait()
-        gripper.open_gripper()
         time.sleep(1)
+
+        movel(counter_pos, vel=VELOCITY/3, acc=ACC/3)
+        gripper.open_gripper()
 
 
 # ================================
