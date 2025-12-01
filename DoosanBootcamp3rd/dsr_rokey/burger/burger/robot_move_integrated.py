@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import yaml
 from scipy.spatial.transform import Rotation
 import numpy as np
 import rclpy
@@ -65,6 +66,28 @@ class RobotController(Node):
     def __init__(self):
         super().__init__("pick_and_place_integrated")
 
+        # 중앙 설정 파일(recipes.yaml) 로드
+        try:
+            package_share_directory = os.path.expanduser("/home/rokey/nj_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
+            
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
+            
+            # YAML 파일에서 레시피 정보 로드
+            korean_menu_db = config['menu_db'] 
+            self.ingredient_map_korean_to_yolo = config['ingredient_map_korean_to_yolo']
+
+            # 로봇이 사용할 영문(YOLO) 레시피 DB를 동적으로 생성
+            self.menu_db = {}
+            for menu_name, ingredients in korean_menu_db.items():
+                self.menu_db[menu_name] = [self.ingredient_map_korean_to_yolo.get(item, item) for item in ingredients]
+
+            self.get_logger().info(f"Successfully loaded recipes from {config_path}")
+
+        except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
+            self.get_logger().fatal(f"Failed to load or parse recipes.yaml: {e}")
+            raise e
         # 기본 메뉴 구성
         self.menu_db = {
             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
@@ -128,6 +151,9 @@ class RobotController(Node):
         td_coord = np.dot(base2cam, coord)
         return td_coord[:3]
 
+    # ====================================
+    #      MAIN ORDER PROCESSING LOGIC
+    # ====================================
     def sweep_find_marked_box(
         self,
         x=600.0,

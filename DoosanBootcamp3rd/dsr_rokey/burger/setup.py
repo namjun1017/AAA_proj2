@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/resource', glob.glob('resource/*')),
         ('share/' + package_name + '/launch', glob.glob('launch/*')),
+        ('share/' + package_name + '/config', glob.glob('yaml/*'))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,10 +32,7 @@ setup(
             'detection = burger.detection:main',
             'order_test_subscriber = burger.order_test_subscriber:main',
             'robot_move_integrated = burger.robot_move_integrated:main',
-            'test=burger.test:main',
-            'box_detection = burger.box_detection:main',
-            'realsense = burger.realsense:main',
-            'marker_check = burger.marker_check:main',
+            'face_detection_node = burger.face_detection_node:main',
         ],
     },
 )

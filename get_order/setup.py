@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'get_order = get_order.get_order:main',
+            'speak_order = get_order.speak_order:main',
         ],
     },
 )
