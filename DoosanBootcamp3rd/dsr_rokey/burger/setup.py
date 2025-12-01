@@ -31,6 +31,10 @@ setup(
             'detection = burger.detection:main',
             'order_test_subscriber = burger.order_test_subscriber:main',
             'robot_move_integrated = burger.robot_move_integrated:main',
+            'test=burger.test:main',
+            'box_detection = burger.box_detection:main',
+            'realsense = burger.realsense:main',
+            'marker_check = burger.marker_check:main',
         ],
     },
 )
