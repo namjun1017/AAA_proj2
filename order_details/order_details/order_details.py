@@ -396,14 +396,9 @@ class OrderDetails(Node):
             # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
 
             # 4. 발행
-<<<<<<< HEAD
-            self.cmd_pub.publish(order_msg)
-            self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
-=======
             # self.cmd_pub.publish(order_msg)
             # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
             self.last_order_msg = order_msg
->>>>>>> a600f76 (hi)
             
             formatted_text = self._format_order_to_text(parsed_dict)
             text_msg = String()
@@ -414,8 +409,6 @@ class OrderDetails(Node):
             
         else:
             self.get_logger().warn("Failed to parse order or result was None.")
-<<<<<<< HEAD
-=======
 
 
     def finish_work_callback(self, msg):
@@ -426,7 +419,6 @@ class OrderDetails(Node):
         else:
             # 이전에 저장된 주문이 없거나, 메시지 데이터가 False일 때
             self.get_logger().warn(f"Received /finish_work signal (data: {msg.data}), but no valid order is stored or signal is False.")
->>>>>>> a600f76 (hi)
 
 
 # -------------------------
