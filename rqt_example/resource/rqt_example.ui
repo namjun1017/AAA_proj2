@@ -70,7 +70,7 @@
          </widget>
         </item>
         <item row="1" column="0">
-         <widget class="QPushButton" name="push_button_finishOrder">
+         <widget class="QPushButton" name="push_button_reOrder">
           <property name="font">
            <font>
             <pointsize>20</pointsize>
@@ -79,7 +79,7 @@
            </font>
           </property>
           <property name="text">
-           <string>주문종료</string>
+           <string>재주문</string>
           </property>
          </widget>
         </item>

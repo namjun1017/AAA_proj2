@@ -30,6 +30,7 @@ class ExamplesWidget(QWidget):
         # Publishers
         # --------------------------
         self.pub_order_start = self.node.create_publisher(Bool, '/order_start', qos)
+        self.pub_reorder = self.node.create_publisher(Bool, '/reorder', qos)
         self.pub_finish_work = self.node.create_publisher(Bool, '/finish_work', qos)
 
         # --------------------------
@@ -46,7 +47,7 @@ class ExamplesWidget(QWidget):
         # Button Connect
         # --------------------------
         self.push_button_startOrder.clicked.connect(self.send_start_order)
-        self.push_button_finishOrder.clicked.connect(self.send_finish_order)
+        self.push_button_reOrder.clicked.connect(self.send_reorder)
         self.push_button_finishWork.clicked.connect(self.send_finish_work)
 
         # --------------------------
@@ -74,9 +75,9 @@ class ExamplesWidget(QWidget):
         msg.data = True
         self.pub_order_start.publish(msg)
 
-    def send_finish_order(self):
+    def send_reorder(self):
         msg = Bool()
-        msg.data = False
+        msg.data = True
         self.pub_order_start.publish(msg)
 
     def send_finish_work(self):
@@ -90,4 +91,5 @@ class ExamplesWidget(QWidget):
     def shutdown_widget(self):
         self.node.destroy_subscription(self.sub_order_text)
         self.node.destroy_publisher(self.pub_order_start)
+        self.node.destroy_publisher(self.pub_reorder)
         self.node.destroy_publisher(self.pub_finish_work)

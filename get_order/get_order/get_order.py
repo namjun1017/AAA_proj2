@@ -44,7 +44,7 @@ class GetOrder(Node):
 
     def getword_callback(self, msg):
         if msg.data:
-            self.get_logger().info("Recording for 5 seconds...")
+            self.get_logger().info("Recording for 10 seconds...")
 
             audio = sd.rec(
                 int(self.duration * self.samplerate),
