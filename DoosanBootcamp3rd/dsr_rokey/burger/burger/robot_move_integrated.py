@@ -32,6 +32,7 @@ ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
 BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
+INGREDIENT_THICKNESS = 10
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -163,11 +164,12 @@ class RobotController(Node):
             # ====================================
             #           PICK & PLACE LOOP
             # ====================================
-            for ingredient_name in final_assembly_list:
-
+            for idx, ingredient_name in enumerate(final_assembly_list):
                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
 
                 self.depth_request.target = ingredient_name
+
+                self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
                 depth_future = self.depth_client.call_async(self.depth_request)
                 rclpy.spin_until_future_complete(self, depth_future)
 
@@ -186,6 +188,7 @@ class RobotController(Node):
                 td_coord[2] = max(td_coord[2], 2)
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
+                target_pos[2] = BUCKET_POS[2] + idx * INGREDIENT_THICKNESS
 
                 self.get_logger().info(f"Target position: {target_pos}")
                 self.pick_and_place_target(target_pos)
