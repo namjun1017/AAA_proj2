@@ -1,3 +1,5 @@
+# examples_widget.py 파일 전체를 아래와 같이 수정합니다.
+
 import os
 
 from ament_index_python.resources import get_resource
@@ -6,7 +8,7 @@ from python_qt_binding.QtWidgets import QWidget, QLabel
 
 import rclpy
 from rclpy.qos import QoSProfile
-from std_msgs.msg import Bool, String
+from std_msgs.msg import String
 
 
 class ExamplesWidget(QWidget):
@@ -20,6 +22,7 @@ class ExamplesWidget(QWidget):
         pkg_name = 'rqt_example'
         ui_filename = 'rqt_example.ui'
 
+        # UI 파일 로드 (기존과 동일)
         _, package_path = get_resource('packages', pkg_name)
         ui_file = os.path.join(package_path, 'share', pkg_name, 'resource', ui_filename)
         loadUi(ui_file, self)
@@ -27,14 +30,12 @@ class ExamplesWidget(QWidget):
         qos = QoSProfile(depth=10)
 
         # --------------------------
-        # Publishers
+        # Publishers 제거 (모든 버튼 기능 제거)
         # --------------------------
-        self.pub_order_start = self.node.create_publisher(Bool, '/order_start', qos)
-        self.pub_reorder = self.node.create_publisher(Bool, '/reorder', qos)
-        self.pub_finish_work = self.node.create_publisher(Bool, '/finish_work', qos)
+        # 기존: self.pub_order_start, self.pub_reorder, self.pub_finish_work 관련 코드 모두 제거
 
         # --------------------------
-        # Subscriber (label)
+        # Subscriber (주문 내역 표시용)
         # --------------------------
         self.sub_order_text = self.node.create_subscription(
             String,
@@ -44,52 +45,34 @@ class ExamplesWidget(QWidget):
         )
 
         # --------------------------
-        # Button Connect
+        # Button Connect 제거 (모든 버튼 연결 제거)
         # --------------------------
-        self.push_button_startOrder.clicked.connect(self.send_start_order)
-        self.push_button_reOrder.clicked.connect(self.send_reorder)
-        self.push_button_finishWork.clicked.connect(self.send_finish_work)
+        # 기존: push_button_startOrder, push_button_reOrder, push_button_finishWork 연결 제거
 
         # --------------------------
         # QLabel 생성 후 ScrollArea에 넣기
         # --------------------------
         self.label = QLabel()                  # ScrollArea에 들어갈 QLabel
         self.label.setWordWrap(True)           # 줄 바꿈 활성화
-
         self.scrollArea.setWidget(self.label)  # 기존 scrollArea에 QLabel 배치
 
         # 초기 텍스트
-        self.label.setText("")
+        self.label.setText("주문을 시작하려면 '/face' 토픽으로 True 신호를 보내주세요.")
 
     # ==========================================================
-    # Callback: order_text 구독해서 label 업데이트
+    # Callback: order_text 구독해서 label 업데이트 (주문 내역 표시)
     # ==========================================================
     def cb_order_text(self, msg: String):
         self.label.setText(msg.data)
 
     # ==========================================================
-    # Button functions
+    # Button functions 제거 (모든 send_* 함수 제거)
     # ==========================================================
-    def send_start_order(self):
-        msg = Bool()
-        msg.data = True
-        self.pub_order_start.publish(msg)
-
-    def send_reorder(self):
-        msg = Bool()
-        msg.data = True
-        self.pub_order_start.publish(msg)
-
-    def send_finish_work(self):
-        msg = Bool()
-        msg.data = True
-        self.pub_finish_work.publish(msg)
+    # 기존: send_start_order, send_reorder, send_finish_work 함수 모두 제거
 
     # ==========================================================
     # 종료 시 정리
     # ==========================================================
     def shutdown_widget(self):
         self.node.destroy_subscription(self.sub_order_text)
-        self.node.destroy_publisher(self.pub_order_start)
-        self.node.destroy_publisher(self.pub_reorder)
-        self.node.destroy_publisher(self.pub_finish_work)
+        # 기존 Publisher 정리 코드 제거

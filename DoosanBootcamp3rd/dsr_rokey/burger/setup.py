@@ -31,6 +31,7 @@ setup(
             'detection = burger.detection:main',
             'order_test_subscriber = burger.order_test_subscriber:main',
             'robot_move_integrated = burger.robot_move_integrated:main',
+            'face_detection_node = burger.face_detection_node:main',
         ],
     },
 )
