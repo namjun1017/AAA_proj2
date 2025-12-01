@@ -2,6 +2,8 @@ import os
 import json
 import re
 import warnings
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from dotenv import load_dotenv
 from openai import OpenAI
 from langchain_openai import ChatOpenAI
@@ -10,7 +12,7 @@ from langchain.prompts import PromptTemplate
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from order_interfaces.msg import Order, OrderItem, Option
 
 class OrderDetails(Node):
@@ -19,7 +21,7 @@ class OrderDetails(Node):
         # load_dotenv(dotenv_path=".env")
 
         # 주소는 수정 필요
-        dotenv_path = os.path.expanduser("/home/nj/test_ws/src/order_details/order_details/.env") 
+        dotenv_path = os.path.expanduser("/home/changbeom/ros2_ws/src/order_details/order_details/.env") 
         load_dotenv(dotenv_path=dotenv_path)
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -33,25 +35,26 @@ class OrderDetails(Node):
             openai_api_key=openai_api_key
         )
 
-        # 메뉴 DB
-        self.menu_db = {
-            "불고기버거": ["빵", "불고기", "상추", "토마토", "빵"],
-            "치즈버거": ["빵", "불고기", "치즈", "빵"],
-            "새우버거": ["빵", "새우", "상추", "빵"],
-        }
+        # 중앙 설정 파일(recipes.yaml) 로드
+        try:
+            # 'burger' 패키지의 공유 디렉토리 경로를 찾음
+            package_share_directory = os.path.expanduser("/home/changbeom/ros2_ws/src/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            # 설정 파일의 전체 경로 구성
+            config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
+            
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
+            
+            # YAML 파일에서 메뉴 정보 로드
+            self.menu_db = config['ingredient_map_korean_to_yolo']
+            self.item_alias = config['item_alias']
+            
+            self.get_logger().info(f"Successfully loaded recipes from {config_path}")
 
-        # 옵션 정규화(동의어 → 공식명)
-        self.item_alias = {
-            "패티": "불고기",
-            "고기": "불고기",
-            "불고기패티": "불고기",
-            "미트": "불고기",
-            "불고기": "불고기",
-
-            "양상추": "상추",
-            "토마토소스": "토마토",
-            "치즈슬라이스": "치즈",
-        }
+        except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
+            self.get_logger().fatal(f"Failed to load or parse recipes.yaml: {e}")
+            # 설정 파일 로드 실패 시 노드를 종료하거나, 기본값으로 실행하는 등의 처리가 필요
+            raise e
 
         # 메뉴 목록을 문자열로 변환하여 프롬프트에 삽입
         menu_lines = "\n".join(
@@ -78,7 +81,14 @@ class OrderDetails(Node):
             self.order_callback,
             qos
         )
+        self.sub_finish_work = self.create_subscription(
+            Bool,
+            '/finish_work',
+            self.finish_work_callback,
+            qos
+        )
 
+        self.last_order_msg = None
         # ----- Prompt -----
 # ----- Prompt -----
         prompt_content = f"""
@@ -107,6 +117,7 @@ class OrderDetails(Node):
         - 수량 없으면 1로 간주.
         - '빼', '빼줘' 등은 remove.
         - '더', '추가', '추가했어', '추가해줘', '더 넣어줘', '더 줘' 등은 모두 add.
+        - 기본 구성에 없는 항목 add는 무시.
         - amount 명시 없으면 1.
         - 출력은 반드시 JSON만.
 
@@ -386,9 +397,7 @@ class OrderDetails(Node):
             # self.cmd_pub.publish(order_msg)
             # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
 
-            # 4. 발행
-            self.cmd_pub.publish(order_msg)
-            self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
+            self.last_order_msg = order_msg
             
             formatted_text = self._format_order_to_text(parsed_dict)
             text_msg = String()
@@ -400,6 +409,14 @@ class OrderDetails(Node):
         else:
             self.get_logger().warn("Failed to parse order or result was None.")
 
+    def finish_work_callback(self, msg):
+        if msg.data is True and self.last_order_msg is not None: # Bool 메시지 내용 확인 로직 추가 (필수 아님, 권장)
+            self.cmd_pub.publish(self.last_order_msg)
+            self.get_logger().info(f"Received /finish_work signal (data: {msg.data}). Publishing last stored Order to /cmd.")
+            self.last_order_msg = None 
+        else:
+            # 이전에 저장된 주문이 없거나, 메시지 데이터가 False일 때
+            self.get_logger().warn(f"Received /finish_work signal (data: {msg.data}), but no valid order is stored or signal is False.")
 
 # -------------------------
 # 실행 테스트
@@ -414,3 +431,4 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
