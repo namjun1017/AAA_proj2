@@ -5,11 +5,11 @@ from typing import Any, Callable, Optional, Tuple
 
 from ament_index_python.packages import get_package_share_directory
 from od_msg.srv import SrvDepthPosition
-from pick_and_place_text.realsense import ImgNode
-from pick_and_place_text.yolo import YoloModel
+from burger.realsense import ImgNode
+from burger.yolo import YoloModel
 
 
-PACKAGE_NAME = 'pick_and_place_text'
+PACKAGE_NAME = 'burger'
 PACKAGE_PATH = get_package_share_directory(PACKAGE_NAME)
 
 

@@ -19,13 +19,18 @@ import cv2.aruco as aruco
 
 package_path = get_package_share_directory("burger")
 
-# --- [수정된 부분 1] ---
-# [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# ----------------------
+# YOLO 클래스 ID 매핑
+ingredient_dict = {
+    1: "bun_bottom",
+    2: "bun_top",
+    3: "cheese",
+    4: "lettuce",
+    5: "onion",
+    6: "patty",
+    7: "shrimp",
+    8: "tomato",
+}
 
-# for single robot
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
@@ -46,8 +51,10 @@ except ImportError as e:
     print(f"Error importing DSR_ROBOT2: {e}")
     sys.exit()
 
-########### Gripper Setup. Do not modify this area ############
 
+# ================================
+#     GRIPPER INITIALIZATION
+# ================================
 GRIPPER_NAME = "rg2"
 TOOLCHANGER_IP = "192.168.1.1"
 TOOLCHANGER_PORT = "502"
@@ -63,18 +70,24 @@ class RobotController(Node):
     def __init__(self):
         super().__init__("pick_and_place_integrated")
 
-        # 메뉴 DB와 재료 이름 매핑
+        # 기본 메뉴 구성
         self.menu_db = {
             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
             "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
             "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
         }
+
+        # 한국어 옵션 명 → YOLO 클래스로 매핑
         self.ingredient_map_korean_to_yolo = {
-            "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce",
-            "토마토": "tomato", "새우": "shrimp", "번": "bun_bottom"
+            "빵": "bun_bottom",
+            "불고기": "patty",
+            "치즈": "cheese",
+            "상추": "lettuce",
+            "토마토": "tomato",
+            "새우": "shrimp",
+            "번": "bun_bottom",
         }
-        
-        # 주문 큐
+
         self.order_queue = deque(maxlen=1)
 
         self.init_robot()
@@ -93,8 +106,9 @@ class RobotController(Node):
 
         # /cmd 토픽 구독
         self.order_subscription = self.create_subscription(
-            Order, '/cmd', self.order_callback, QoSProfile(depth=10)
+            Order, "/cmd", self.order_callback, QoSProfile(depth=10)
         )
+
         self.get_logger().info("Integrated Robot Controller is running.")
 
 
@@ -231,25 +245,55 @@ class RobotController(Node):
 
             base_ingredients = self.menu_db.get(burger.menu_name, [])
             ingredient_counts = Counter(base_ingredients)
+    # ====================================
+    #      MAIN ORDER PROCESSING LOGIC
+    # ====================================
+    def robot_control(self):
+        if not self.order_queue:
+            return
+
+        order = self.order_queue.popleft()
+        self.get_logger().info(f"Processing order: {order.notes}")
+
+        for burger in order.burgers:
+            self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
+
+            # ====================================
+            #   🔥 핵심 수정 — 옵션을 bun_top 앞에 삽입
+            # ====================================
+            final_assembly_list = list(self.menu_db.get(burger.menu_name, []))
 
             for option in burger.options:
+                self.get_logger().info(
+                    f"[DEBUG] option.item={option.item}, type={option.type}, amount={option.amount}"
+                )
+
                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
-                if yolo_item:
-                    if option.type == 'add':
-                        ingredient_counts[yolo_item] += option.amount
-                    elif option.type == 'remove':
-                        ingredient_counts[yolo_item] = max(0, ingredient_counts[yolo_item] - option.amount)
+                if not yolo_item:
+                    continue
 
-            final_assembly_list = []
-            for item in base_ingredients:
-                count = ingredient_counts.pop(item, 0)
-                final_assembly_list.extend([item] * count)
-            for item, count in ingredient_counts.items():
-                final_assembly_list.extend([item] * count)
+                # ADD 옵션 : bun_top 바로 앞에 삽입
+                if option.type == "add":
+                    for _ in range(option.amount):
+                        if "bun_top" in final_assembly_list:
+                            idx = final_assembly_list.index("bun_top")
+                            final_assembly_list.insert(idx, yolo_item)
+                        else:
+                            final_assembly_list.append(yolo_item)
 
-            self.get_logger().info(f"Assembly list: {final_assembly_list}")
+                # REMOVE 옵션
+                elif option.type == "remove":
+                    for _ in range(option.amount):
+                        if yolo_item in final_assembly_list:
+                            final_assembly_list.remove(yolo_item)
 
+            self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
+
+            # ====================================
+            #           PICK & PLACE LOOP
+            # ====================================
             for ingredient_name in final_assembly_list:
+
                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
 
                 self.depth_request.target = ingredient_name
@@ -265,7 +309,7 @@ class RobotController(Node):
                 robot_posx = get_current_posx()[0]
                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
 
-                td_coord[2] += 50  
+                td_coord[2] += 50
                 td_coord[2] = max(td_coord[2], 2)
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
@@ -273,7 +317,11 @@ class RobotController(Node):
                 self.pick_and_place_target(target_pos)
                 self.init_robot()
 
-    ###################################################################
+            self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
+
+    # ================================
+    #            ROBOT MOVES
+    # ================================
     def init_robot(self):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
@@ -312,7 +360,9 @@ class RobotController(Node):
         time.sleep(1)
 
 
-
+# ================================
+#            MAIN LOOP
+# ================================
 def main(args=None):
     node = RobotController()
     while rclpy.ok():
