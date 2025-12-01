@@ -292,11 +292,12 @@ class RobotController(Node):
             # ====================================
             #           PICK & PLACE LOOP
             # ====================================
-            for ingredient_name in final_assembly_list:
-
+            for idx, ingredient_name in enumerate(final_assembly_list):
                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
 
                 self.depth_request.target = ingredient_name
+
+                self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
                 depth_future = self.depth_client.call_async(self.depth_request)
                 rclpy.spin_until_future_complete(self, depth_future)
 
@@ -313,6 +314,7 @@ class RobotController(Node):
                 td_coord[2] = max(td_coord[2], 2)
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
+                target_pos[2] = BUCKET_POS[2] + idx * INGREDIENT_THICKNESS
 
                 self.pick_and_place_target(target_pos)
                 self.init_robot()
