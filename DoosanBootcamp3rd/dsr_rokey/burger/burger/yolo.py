@@ -13,7 +13,7 @@ import numpy as np
 # --- [수정된 부분 1] ---
 # 사용자의 커스텀 모델 절대 경로를 직접 지정합니다.
 # 경로에 사용자 이름(changbeom)이 포함되어 있으니, 다른 환경에서는 수정이 필요할 수 있습니다.
-YOLO_MODEL_PATH = "/home/rokey/nj_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger/cvs/best_v04.pt"
+YOLO_MODEL_PATH = "/home/hyochan/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger/cvs/best_v04.pt"
 # ----------------------
 
 
