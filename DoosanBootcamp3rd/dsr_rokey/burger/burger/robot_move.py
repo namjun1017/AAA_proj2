@@ -12,17 +12,22 @@ from collections import Counter, deque
 from od_msg.srv import SrvDepthPosition
 from ament_index_python.packages import get_package_share_directory
 from burger.onrobot import RG
-from order_interfaces.msg import Order 
+from order_interfaces.msg import Order
 
 package_path = get_package_share_directory("burger")
 
-# --- [수정된 부분 1] ---
-# [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# ----------------------
+# YOLO 클래스 ID 매핑
+ingredient_dict = {
+    1: "bun_bottom",
+    2: "bun_top",
+    3: "cheese",
+    4: "lettuce",
+    5: "onion",
+    6: "patty",
+    7: "shrimp",
+    8: "tomato",
+}
 
-# for single robot
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
@@ -41,42 +46,59 @@ except ImportError as e:
     print(f"Error importing DSR_ROBOT2: {e}")
     sys.exit()
 
-########### Gripper Setup. Do not modify this area ############
 
+# ================================
+#     GRIPPER INITIALIZATION
+# ================================
 GRIPPER_NAME = "rg2"
 TOOLCHANGER_IP = "192.168.1.1"
 TOOLCHANGER_PORT = "502"
 gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
 
 
-########### Robot Controller ############
-
-
+# ================================
+#     ROBOT CONTROLLER CLASS
+# ================================
 class RobotController(Node):
     def __init__(self):
-        super().__init__("pick_and_place")
+        super().__init__("pick_and_place_integrated")
 
-        # 🚨 [추가] 메뉴 DB 및 매핑 정의
+        # 기본 메뉴 구성
         self.menu_db = {
-            "불고기버거": ["빵", "불고기", "상추", "토마토", "빵"],
-            "치즈버거": ["빵", "불고기", "치즈", "빵"],
-            "새우버거": ["빵", "새우", "상추", "빵"],
+            "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
+            "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
+            "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
         }
-        
-        self.ingredient_map = {
-            "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce", 
-            "토마토": "tomato", "새우": "shrimp", "bun_top": "bun_top" 
+
+        # 한국어 옵션 명 → YOLO 클래스로 매핑
+        self.ingredient_map_korean_to_yolo = {
+            "빵": "bun_bottom",
+            "불고기": "patty",
+            "치즈": "cheese",
+            "상추": "lettuce",
+            "토마토": "tomato",
+            "새우": "shrimp",
+            "번": "bun_bottom",
         }
-        
-        # 🚨 [추가] 작업 큐 초기화
-        self.pending_tasks = [] 
+
+        self.order_queue = deque(maxlen=1)
 
         self.init_robot()
+
         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
         while not self.depth_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("Waiting for depth position service...")
         self.depth_request = SrvDepthPosition.Request()
-        self.robot_control()
+
+        self.order_subscription = self.create_subscription(
+            Order, "/cmd", self.order_callback, QoSProfile(depth=10)
+        )
+
+        self.get_logger().info("Integrated Robot Controller is running.")
+
+    def order_callback(self, msg):
+        self.get_logger().info("New order received, adding to queue.")
+        self.order_queue.append(msg)
 
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
@@ -86,74 +108,94 @@ class RobotController(Node):
         return T
 
     def transform_to_base(self, camera_coords, gripper2cam_path, robot_pos):
-        """
-        Converts 3D coordinates from the camera coordinate system
-        to the robot's base coordinate system.
-        """
         gripper2cam = np.load(gripper2cam_path)
-        coord = np.append(np.array(camera_coords), 1)  # Homogeneous coordinate
-
+        coord = np.append(np.array(camera_coords), 1)
         x, y, z, rx, ry, rz = robot_pos
         base2gripper = self.get_robot_pose_matrix(x, y, z, rx, ry, rz)
-
-        # 좌표 변환 (그리퍼 → 베이스)
         base2cam = base2gripper @ gripper2cam
         td_coord = np.dot(base2cam, coord)
-
         return td_coord[:3]
 
+    # ====================================
+    #      MAIN ORDER PROCESSING LOGIC
+    # ====================================
     def robot_control(self):
-        # --- [수정된 부분 2] ---
-        print("====================================")
-        print("Available ingredients: ")
-        for key, value in ingredient_dict.items():
-            print(f"  {key} : {value}")
-        print("")
+        if not self.order_queue:
+            return
 
-        user_input = input("What do you want to bring?: ")
-        # ----------------------
+        order = self.order_queue.popleft()
+        self.get_logger().info(f"Processing order: {order.notes}")
 
-        if user_input.lower() == "q":
-            self.get_logger().info("Quit the program...")
-            sys.exit()
+        for burger in order.burgers:
+            self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
 
-        if user_input:
-            try:
-                user_input_int = int(user_input)
-                # --- [수정된 부분 3] ---
-                user_input = ingredient_dict.get(user_input_int, user_input)
-                # ----------------------
-            except ValueError:
-                pass  # 변환 불가능하면 원래 문자열 유지
-            self.depth_request.target = user_input
-            self.get_logger().info("call depth position service with yolo")
-            depth_future = self.depth_client.call_async(self.depth_request)
-            rclpy.spin_until_future_complete(self, depth_future)
+            # ====================================
+            #   🔥 핵심 수정 — 옵션을 bun_top 앞에 삽입
+            # ====================================
+            final_assembly_list = list(self.menu_db.get(burger.menu_name, []))
 
-            if depth_future.result():
+            for option in burger.options:
+                self.get_logger().info(
+                    f"[DEBUG] option.item={option.item}, type={option.type}, amount={option.amount}"
+                )
+
+                yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
+                if not yolo_item:
+                    continue
+
+                # ADD 옵션 : bun_top 바로 앞에 삽입
+                if option.type == "add":
+                    for _ in range(option.amount):
+                        if "bun_top" in final_assembly_list:
+                            idx = final_assembly_list.index("bun_top")
+                            final_assembly_list.insert(idx, yolo_item)
+                        else:
+                            final_assembly_list.append(yolo_item)
+
+                # REMOVE 옵션
+                elif option.type == "remove":
+                    for _ in range(option.amount):
+                        if yolo_item in final_assembly_list:
+                            final_assembly_list.remove(yolo_item)
+
+            self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
+
+            # ====================================
+            #           PICK & PLACE LOOP
+            # ====================================
+            for ingredient_name in final_assembly_list:
+
+                self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
+
+                self.depth_request.target = ingredient_name
+                depth_future = self.depth_client.call_async(self.depth_request)
+                rclpy.spin_until_future_complete(self, depth_future)
+
+                if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
+                    self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
+                    continue
+
                 result = depth_future.result().depth_position.tolist()
                 self.get_logger().info(f"Received depth position: {result}")
-                if sum(result) == 0:
-                    print("No target position")
-                    return
 
-                gripper2cam_path = os.path.join(
-                    package_path, "resource", "T_gripper2camera.npy"
-                )
+                gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
                 robot_posx = get_current_posx()[0]
                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
 
-                if td_coord[2] and sum(td_coord) != 0:
-                    td_coord[2] += 50  # DEPTH_OFFSET
-                    td_coord[2] = max(td_coord[2], 2)  # MIN_DEPTH: float = 2.0
+                td_coord[2] += 50
+                td_coord[2] = max(td_coord[2], 2)
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
 
-                self.get_logger().info(f"target position: {target_pos}")
+                self.get_logger().info(f"Target position: {target_pos}")
                 self.pick_and_place_target(target_pos)
                 self.init_robot()
-        self.init_robot()
 
+            self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
+
+    # ================================
+    #            ROBOT MOVES
+    # ================================
     def init_robot(self):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
@@ -161,34 +203,34 @@ class RobotController(Node):
         mwait()
 
     def pick_and_place_target(self, target_pos):
-        # delete
-        target_pos[3] += 10
-
-        movel(target_pos, vel=VELOCITY, acc=ACC)
+        pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
+        movel(pick_pos_above, vel=VELOCITY, acc=ACC)
+        mwait()
+        movel(target_pos, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
         gripper.close_gripper()
-
-        while gripper.get_status()[0]:
-            time.sleep(0.5)
-
-        # target_pos_up = trans(target_pos, [0, 0, 200, 0, 0, 0]).tolist()
-        target_pos_up = trans(target_pos, [0, 0, 20, 0, 0, 0]).tolist()
-
-        movel(target_pos_up, vel=VELOCITY, acc=ACC)
-        # movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
+        time.sleep(1)
+        movel(pick_pos_above, vel=VELOCITY, acc=ACC)
         mwait()
 
+        self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
+        movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
+        mwait()
         gripper.open_gripper()
-        while gripper.get_status()[0]:
-            time.sleep(0.5)
+        time.sleep(1)
 
 
+# ================================
+#            MAIN LOOP
+# ================================
 def main(args=None):
     node = RobotController()
     while rclpy.ok():
+        rclpy.spin_once(node, timeout_sec=0.1)
         node.robot_control()
-    rclpy.shutdown()
+
     node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == "__main__":

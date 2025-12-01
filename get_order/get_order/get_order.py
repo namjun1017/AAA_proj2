@@ -183,7 +183,7 @@ class GetOrder(Node):
                     self.get_logger().warn(f"Unrecognized response: '{confirmation_response}'. Assuming re-order for safety.")
                     # 인식 실패나 모호한 응답의 경우 재주문으로 간주하고 다시 메뉴 요청
                     self.speak("죄송합니다. '재주문' 또는 '완료'를 명확하게 말씀해 주시겠어요?")
-                    self.conversation_state = self.STATE_AWAITING_ORDER
+                    # self.conversation_state = self.STATE_AWAITING_ORDER
 
 
 def main(args=None):
