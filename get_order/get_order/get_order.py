@@ -184,6 +184,7 @@ class GetOrder(Node):
                     # 인식 실패나 모호한 응답의 경우 재주문으로 간주하고 다시 메뉴 요청
                     self.speak("죄송합니다. '재주문' 또는 '완료'를 명확하게 말씀해 주시겠어요?")
                     # self.conversation_state = self.STATE_AWAITING_ORDER
+                    # 위에거 주석하니까 완료나 재주문 할 때 다시 주문 안해도됨
 
 
 def main(args=None):
