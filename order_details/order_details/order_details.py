@@ -105,9 +105,9 @@ class OrderDetails(Node):
         <규칙>
         - 메뉴 이름은 메뉴 DB에 가능한 한 맞춰 정정합니다.
         - 수량 없으면 1로 간주.
-        - '빼', '빼줘' 등은 remove / '더', '추가' 등은 add.
+        - '빼', '빼줘' 등은 remove.
+        - '더', '추가', '추가했어', '추가해줘', '더 넣어줘', '더 줘' 등은 모두 add.
         - amount 명시 없으면 1.
-        - 기본 구성에 없는 항목 add는 무시.
         - 출력은 반드시 JSON만.
 
         <예시 입력/출력>
@@ -293,12 +293,7 @@ class OrderDetails(Node):
                 if item in self.item_alias:
                     opt["item"] = self.item_alias[item]
                 
-                # --- [수정] 핵심 유효성 검증: 기본 구성에 없는 항목 'add'는 무시 ---
-                if opt["type"] == "add" and opt["item"] not in base_items:
-                    # 유효하지 않은 'add' 옵션은 경고 후 건너뛰기
-                    warnings.warn(f"Ignoring 'add' option: '{opt['item']}' not in base menu: '{order['menu']}'", stacklevel=2)
-                    continue
-
+                
                 valid_options.append(opt)
 
             # 유효한 옵션 리스트로 갱신
@@ -312,62 +307,98 @@ class OrderDetails(Node):
         return parsed
 
     def order_callback(self, msg):
-            raw_text = msg.data
-            parsed_dict = self.parse_order(raw_text)
+        raw_text = msg.data
+        self.get_logger().info(f"[DEBUG] STEP 1 - Raw voice input: {raw_text}")
 
-            if parsed_dict:
-                self.get_logger().info(f"Parsed raw order and starting mapping.")
+        parsed_dict = self.parse_order(raw_text)
 
-                # 🚨 1. 최상위 Order 메시지 객체 생성
-                order_msg = Order()
-                order_msg.notes = parsed_dict.get("notes", "")
+        if parsed_dict is None:
+            self.get_logger().error("[ERROR] Failed to parse order → parsed_dict is None")
+            return
+
+        if not parsed_dict.get("orders"):
+            self.get_logger().error(f"[ERROR] No orders detected in parsed_dict={parsed_dict}")
+            return
+
+        self.get_logger().info("Parsed raw order and starting mapping.")
+
+
+        if parsed_dict:
+            self.get_logger().info(f"Parsed raw order and starting mapping.")
+
+            # 🚨 1. 최상위 Order 메시지 객체 생성
+            order_msg = Order()
+            order_msg.notes = parsed_dict.get("notes", "")
+            
+            # Level 2 (개별 인스턴스)를 담을 리스트
+            burger_instances = [] 
+            
+            # 🚨 2. 수량(Quantity)만큼 반복하여 인스턴스 풀기 (Unrolling)
+            for item_dict in parsed_dict.get("orders", []):
+                menu_name = item_dict.get("menu", "")
+                quantity = item_dict.get("quantity", 0)
                 
-                # Level 2 (개별 인스턴스)를 담을 리스트
-                burger_instances = [] 
-                
-                # 🚨 2. 수량(Quantity)만큼 반복하여 인스턴스 풀기 (Unrolling)
-                for item_dict in parsed_dict.get("orders", []):
-                    menu_name = item_dict.get("menu", "")
-                    quantity = item_dict.get("quantity", 0)
+                # 수량 (quantity) 만큼 반복하여 개별 인스턴스 생성
+                for i in range(quantity):
+                    # 🚨 Level 2: 개별 버거 인스턴스 생성 (불고기버거_1)
+                    burger_instance_msg = OrderItem() 
+                    burger_instance_msg.menu_name = menu_name
                     
-                    # 수량 (quantity) 만큼 반복하여 개별 인스턴스 생성
-                    for i in range(quantity):
-                        # 🚨 Level 2: 개별 버거 인스턴스 생성 (불고기버거_1)
-                        burger_instance_msg = OrderItem() 
-                        burger_instance_msg.menu_name = menu_name
+                    options_list = []
+                    
+                    # 🚨 Level 3: 해당 인스턴스에 적용할 옵션 리스트 생성
+                    for opt_dict in item_dict.get("options", []):
+                        option_msg = Option()
+                        option_msg.item = opt_dict.get("item", "")
+                        option_msg.type = opt_dict.get("type", "")
                         
-                        options_list = []
-                        
-                        # 🚨 Level 3: 해당 인스턴스에 적용할 옵션 리스트 생성
-                        for opt_dict in item_dict.get("options", []):
-                            option_msg = Option()
-                            option_msg.item = opt_dict.get("item", "")
-                            option_msg.type = opt_dict.get("type", "")
-                            
-                            # 인스턴스별 옵션에서는 amount를 1로 처리하는 것이 일반적입니다.
-                            # (하나의 버거에 치즈 2개를 넣고 싶다면, LLM이 옵션을 두 개로 분리하는 것이 더 명확합니다.)
-                            option_msg.amount = opt_dict.get("amount", 1) 
-                            options_list.append(option_msg)
-                        
-                        burger_instance_msg.options = options_list
-                        burger_instances.append(burger_instance_msg)
-                        
-                # 3. 최상위 Order 메시지에 인스턴스 리스트 설정
-                order_msg.burgers = burger_instances 
-                
-                # 4. 발행
-                self.cmd_pub.publish(order_msg)
-                self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
-                
-                formatted_text = self._format_order_to_text(parsed_dict)
-                text_msg = String()
-                text_msg.data = formatted_text
+                        # 인스턴스별 옵션에서는 amount를 1로 처리하는 것이 일반적입니다.
+                        # (하나의 버거에 치즈 2개를 넣고 싶다면, LLM이 옵션을 두 개로 분리하는 것이 더 명확합니다.)
+                        option_msg.amount = opt_dict.get("amount", 1) 
+                        options_list.append(option_msg)
+                    
+                    burger_instance_msg.options = options_list
+                    burger_instances.append(burger_instance_msg)
+                    
+            # 3. 최상위 Order 메시지에 인스턴스 리스트 설정
+            order_msg.burgers = burger_instances 
+            # 3. 최상위 Order 메시지에 인스턴스 리스트 설정
+            # order_msg.burgers = burger_instances 
 
-                self.text_pub.publish(text_msg)
-                self.get_logger().info("Published formatted order text to /order_text topic.")
+            # ===========================
+            # 🔥 DEBUG: 파싱된 주문 구조 확인
+            # ===========================
+            self.get_logger().info("===== DEBUG ORDER_DETAILS OUTPUT =====")
+            for idx, burger in enumerate(order_msg.burgers):
+                self.get_logger().info(f"[Burger {idx}] menu_name = {burger.menu_name}")
                 
-            else:
-                self.get_logger().warn("Failed to parse order or result was None.")
+                if not burger.options:
+                    self.get_logger().warn(f"[Burger {idx}] ⚠ options is EMPTY")
+                else:
+                    for op in burger.options:
+                        self.get_logger().info(
+                            f"   OPTION → item={op.item}, type={op.type}, amount={op.amount}"
+                        )
+            self.get_logger().info(f"notes = {order_msg.notes}")
+            self.get_logger().info("======================================")
+
+            # 4. 발행
+            # self.cmd_pub.publish(order_msg)
+            # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
+
+            # 4. 발행
+            self.cmd_pub.publish(order_msg)
+            self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
+            
+            formatted_text = self._format_order_to_text(parsed_dict)
+            text_msg = String()
+            text_msg.data = formatted_text
+
+            self.text_pub.publish(text_msg)
+            self.get_logger().info("Published formatted order text to /order_text topic.")
+            
+        else:
+            self.get_logger().warn("Failed to parse order or result was None.")
 
 
 # -------------------------
