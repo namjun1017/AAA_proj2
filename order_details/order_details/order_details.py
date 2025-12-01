@@ -10,7 +10,7 @@ from langchain.prompts import PromptTemplate
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from order_interfaces.msg import Order, OrderItem, Option
 
 class OrderDetails(Node):
@@ -19,7 +19,7 @@ class OrderDetails(Node):
         # load_dotenv(dotenv_path=".env")
 
         # 주소는 수정 필요
-        dotenv_path = os.path.expanduser("/home/nj/test_ws/src/order_details/order_details/.env") 
+        dotenv_path = os.path.expanduser("/home/rokey/nj_ws/src/AAA_proj2/order_details/order_details/.env") 
         load_dotenv(dotenv_path=dotenv_path)
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -78,6 +78,15 @@ class OrderDetails(Node):
             self.order_callback,
             qos
         )
+
+        self.sub_finish_work = self.create_subscription(
+            Bool,
+            '/finish_work',
+            self.finish_work_callback,
+            qos
+        )
+
+        self.last_order_msg = None
 
         # ----- Prompt -----
 # ----- Prompt -----
@@ -387,8 +396,14 @@ class OrderDetails(Node):
             # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
 
             # 4. 발행
+<<<<<<< HEAD
             self.cmd_pub.publish(order_msg)
             self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
+=======
+            # self.cmd_pub.publish(order_msg)
+            # self.get_logger().info(f"Published {len(burger_instances)} individual burger instances to /parsed_order topic.")
+            self.last_order_msg = order_msg
+>>>>>>> a600f76 (hi)
             
             formatted_text = self._format_order_to_text(parsed_dict)
             text_msg = String()
@@ -399,6 +414,19 @@ class OrderDetails(Node):
             
         else:
             self.get_logger().warn("Failed to parse order or result was None.")
+<<<<<<< HEAD
+=======
+
+
+    def finish_work_callback(self, msg):
+        if msg.data is True and self.last_order_msg is not None: # Bool 메시지 내용 확인 로직 추가 (필수 아님, 권장)
+            self.cmd_pub.publish(self.last_order_msg)
+            self.get_logger().info(f"Received /finish_work signal (data: {msg.data}). Publishing last stored Order to /cmd.")
+            self.last_order_msg = None 
+        else:
+            # 이전에 저장된 주문이 없거나, 메시지 데이터가 False일 때
+            self.get_logger().warn(f"Received /finish_work signal (data: {msg.data}), but no valid order is stored or signal is False.")
+>>>>>>> a600f76 (hi)
 
 
 # -------------------------
@@ -414,4 +442,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
