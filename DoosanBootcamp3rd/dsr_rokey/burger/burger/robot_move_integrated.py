@@ -296,10 +296,15 @@ class RobotController(Node):
             self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
 
             # 5) 재료를 "박스 내려놓은 자리(counter_pos)" 위에 쌓기
-            for ingredient_name in final_assembly_list:
+            # ====================================
+            #           PICK & PLACE LOOP
+            # ====================================
+            for idx, ingredient_name in enumerate(final_assembly_list):
                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
 
                 self.depth_request.target = ingredient_name
+
+                self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
                 depth_future = self.depth_client.call_async(self.depth_request)
                 rclpy.spin_until_future_complete(self, depth_future)
 
@@ -319,16 +324,10 @@ class RobotController(Node):
 
                 # 픽업용 target_pos (재료 있는 곳)
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
+                counter_pos = COUNTER_POS.copy()
+                counter_pos[2] += idx * INGREDIENT_THICKNESS
 
-                # ⭐ 여기서 counter_pos가 "박스 내려놓은 자리" 이므로,
-                #    재료는 전부 counter_pos 기준으로 내려놓게 된다.
-                place_tcp = counter_pos.copy()
-                # 필요하면 높이만 조금 올려서 쌓는 효과 줄 수도 있음
-                # 예: place_tcp[2] = counter_pos[2] + 10 * layer_idx
-
-                self.get_logger().info(f"[PLACE TCP] {place_tcp}")
-
-                self.pick_and_place_target(target_pos, counter_pos=place_tcp)
+                self.pick_and_place_target(target_pos,counter_pos)
                 self.init_robot()
 
             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
