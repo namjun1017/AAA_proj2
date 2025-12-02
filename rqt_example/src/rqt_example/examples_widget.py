@@ -57,7 +57,7 @@ class ExamplesWidget(QWidget):
         self.scrollArea.setWidget(self.label)  # 기존 scrollArea에 QLabel 배치
 
         # 초기 텍스트
-        self.label.setText("주문을 시작하려면 '/face' 토픽으로 True 신호를 보내주세요.")
+        self.label.setText("주문을 시작하려면 카메라에 얼굴을 인식 시켜주세요")
 
     # ==========================================================
     # Callback: order_text 구독해서 label 업데이트 (주문 내역 표시)

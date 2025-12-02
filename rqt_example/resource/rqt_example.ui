@@ -6,124 +6,54 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1183</width>
-    <height>600</height>
+    <width>446</width>
+    <height>517</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>RQT Example</string>
   </property>
-  <widget class="QWidget" name="horizontalLayoutWidget">
+  <widget class="QGroupBox" name="group_box_ul_2">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>30</y>
-     <width>621</width>
-     <height>241</height>
+     <x>10</x>
+     <y>10</y>
+     <width>341</width>
+     <height>481</height>
     </rect>
    </property>
-   <layout class="QHBoxLayout" name="horizontalLayout">
-    <item>
-     <widget class="QGroupBox" name="group_box_ul">
-      <property name="title">
-       <string>주문창</string>
-      </property>
-      <widget class="QWidget" name="grid_layout_widget">
-       <property name="geometry">
-        <rect>
-         <x>0</x>
-         <y>40</y>
-         <width>299</width>
-         <height>191</height>
-        </rect>
+   <property name="title">
+    <string>주문내역</string>
+   </property>
+   <widget class="QWidget" name="grid_layout_widget_2">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>40</y>
+      <width>341</width>
+      <height>421</height>
+     </rect>
+    </property>
+    <layout class="QGridLayout" name="grid_layout_2">
+     <item row="0" column="0">
+      <widget class="QScrollArea" name="scrollArea">
+       <property name="widgetResizable">
+        <bool>true</bool>
        </property>
-       <layout class="QGridLayout" name="grid_layout">
-        <item row="3" column="0">
-         <widget class="QPushButton" name="push_button_finishWork">
-          <property name="enabled">
-           <bool>true</bool>
-          </property>
-          <property name="font">
-           <font>
-            <pointsize>20</pointsize>
-            <weight>75</weight>
-            <bold>true</bold>
-           </font>
-          </property>
-          <property name="text">
-           <string>주문 확인 완료 및 계산</string>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="0">
-         <widget class="QPushButton" name="push_button_startOrder">
-          <property name="font">
-           <font>
-            <pointsize>20</pointsize>
-            <weight>75</weight>
-            <bold>true</bold>
-           </font>
-          </property>
-          <property name="text">
-           <string>주문시작</string>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="0">
-         <widget class="QPushButton" name="push_button_reOrder">
-          <property name="font">
-           <font>
-            <pointsize>20</pointsize>
-            <weight>75</weight>
-            <bold>true</bold>
-           </font>
-          </property>
-          <property name="text">
-           <string>재주문</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
+       <widget class="QWidget" name="scrollAreaWidgetContents">
+        <property name="geometry">
+         <rect>
+          <x>0</x>
+          <y>0</y>
+          <width>337</width>
+          <height>417</height>
+         </rect>
+        </property>
+       </widget>
       </widget>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="group_box_ul_2">
-      <property name="title">
-       <string>주문내역</string>
-      </property>
-      <widget class="QWidget" name="grid_layout_widget_2">
-       <property name="geometry">
-        <rect>
-         <x>0</x>
-         <y>40</y>
-         <width>299</width>
-         <height>191</height>
-        </rect>
-       </property>
-       <layout class="QGridLayout" name="grid_layout_2">
-        <item row="0" column="0">
-         <widget class="QScrollArea" name="scrollArea">
-          <property name="widgetResizable">
-           <bool>true</bool>
-          </property>
-          <widget class="QWidget" name="scrollAreaWidgetContents">
-           <property name="geometry">
-            <rect>
-             <x>0</x>
-             <y>0</y>
-             <width>295</width>
-             <height>187</height>
-            </rect>
-           </property>
-          </widget>
-         </widget>
-        </item>
-       </layout>
-      </widget>
-     </widget>
-    </item>
-   </layout>
+     </item>
+    </layout>
+   </widget>
   </widget>
  </widget>
  <resources/>
