@@ -36,7 +36,8 @@ ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
 BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-COUNTER_POS = [150, 250, 50, 105, 180, 105]
+COUNTER_POS = [215, 250, 5, 105, 180, 105]
+INGREDIENT_THICKNESS = 20.0
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -68,7 +69,7 @@ class RobotController(Node):
 
         # 중앙 설정 파일(recipes.yaml) 로드
         try:
-            package_share_directory = os.path.expanduser("/home/rokey/nj_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            package_share_directory = os.path.expanduser("/home/hyochan/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
             config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
             
             with open(config_path, 'r') as file:
@@ -241,32 +242,20 @@ class RobotController(Node):
         bz += 50.0
 
         target_pos = [bx, by, bz, robot_posx[3], robot_posx[4], robot_posx[5]]
-        self.get_logger().info(f"[DEBUG] Final target_pos (TCP target): {target_pos}")
+        self.get_logger().info(f"[DEBUG] Final target_pos (TCP target): {target_pos}")\
+        
+        counter_box_pos = counter_pos.copy()
+        counter_box_pos[0] -= 65
+        counter_box_pos[2] += 50
 
         # 박스를 counter_pos로 옮김
-        self.pick_and_place_target(target_pos, counter_pos=counter_pos)
+        self.pick_and_place_target(target_pos,width_val=0,counter_pos = counter_box_pos)
 
         mwait()
         self.init_robot()
 
     def robot_control(self):
         if not self.order_queue:
-            return
-
-        # 1) 먼저 마커가 붙어 있는 박스를 찾기
-        marker_ids = self.sweep_find_marked_box(
-            x=600.0,
-            y_min=-200.0,
-            y_max=100.0,
-            y_step=50.0,
-            z=150.0,
-            rx=105.0,
-            ry=180.0,
-            rz=105.0,
-        )
-
-        if not marker_ids:
-            self.get_logger().warn("박스가 없습니다.")
             return
 
         # 2) 주문 꺼내기
@@ -276,17 +265,29 @@ class RobotController(Node):
         for burger_idx, burger in enumerate(order.burgers):
             self.get_logger().info(f"--- Making a '{burger.menu_name}' (idx={burger_idx}) ---")
 
-            # x = 150부터 150씩 증가 (카운터에서 박스 내려놓을 위치)
+            # x 위치: 버거 idx마다 150씩 증가
             counter_pos = COUNTER_POS.copy()
-            counter_pos[0] = 150 + burger_idx * 150.0
+            counter_pos[0] += burger_idx * 200.0
             self.get_logger().info(f"[COUNTER POS] x={counter_pos[0]}, y={counter_pos[1]}")
 
-            # 이 버거에 사용할 마커 id 선택
-            if burger_idx < len(marker_ids):
-                marker = marker_ids[burger_idx]
-            else:
-                marker = marker_ids[-1]
+            # 🔹 여기서 "이번 버거에 쓸 박스"를 새로 찾는다
+            marker_ids = self.sweep_find_marked_box(
+                x=600.0,
+                y_min=-200.0,
+                y_max=100.0,
+                y_step=50.0,
+                z=150.0,
+                rx=105.0,
+                ry=180.0,
+                rz=105.0,
+            )
 
+            if not marker_ids:
+                self.get_logger().warn("더 이상 사용할 박스가 없습니다. 남은 버거 작업을 중단합니다.")
+                break
+
+            # 마커 번호는 중요하지 않으니, 가장 먼저 찾은 것 하나만 사용
+            marker = marker_ids[0]
             self.get_logger().info(
                 f"[ROBOT_CONTROL] Using marker id: {marker} for burger idx {burger_idx}"
             )
@@ -321,10 +322,7 @@ class RobotController(Node):
 
             self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
 
-            # 5) 재료를 "박스 내려놓은 자리(counter_pos)" 위에 쌓기
-            # ====================================
-            #           PICK & PLACE LOOP
-            # ====================================
+            # 5) 재료를 "방금 옮긴 박스 자리(counter_pos)" 위에 쌓기
             for idx, ingredient_name in enumerate(final_assembly_list):
                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
 
@@ -345,18 +343,21 @@ class RobotController(Node):
                 robot_posx = get_current_posx()[0]
                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
 
-                td_coord[2] += 50
-                td_coord[2] = max(td_coord[2], 2)
+                td_coord[1] -= 15
+                td_coord[2] -= 10
 
                 # 픽업용 target_pos (재료 있는 곳)
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
                 counter_pos = COUNTER_POS.copy()
+                counter_pos[0] += burger_idx * 200.0
                 counter_pos[2] += idx * INGREDIENT_THICKNESS
 
-                self.pick_and_place_target(target_pos,counter_pos)
+                self.pick_and_place_target(target_pos,width_val=600,counter_pos=counter_pos)
+
                 self.init_robot()
 
             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
+
 
     # ================================
     #            ROBOT MOVES
@@ -364,10 +365,10 @@ class RobotController(Node):
     def init_robot(self):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
-        gripper.open_gripper()
+        gripper.move_gripper(1000)  # 그리퍼 열기
         mwait()
 
-    def pick_and_place_target(self, target_pos, counter_pos=None):
+    def pick_and_place_target(self, target_pos,width_val, counter_pos=None):
         if counter_pos is None:
             counter_pos = COUNTER_POS
 
@@ -382,15 +383,15 @@ class RobotController(Node):
         movel(target_pos, vel=VELOCITY / 3, acc=ACC / 3)
         mwait()
 
-        gripper.close_gripper()
-        time.sleep(1)
+        gripper.move_gripper(width_val, force_val=100)  # 그리퍼 닫기
+        time.sleep(3)
 
         movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
 
         # 내려놓기용 상단 위치 만들기
         place_pos_above = counter_pos.copy()
-        place_pos_above[2] += 150.0
+        place_pos_above[2] += 100.0
 
         # 내려놓기 접근 = 위로 먼저 이동
         movel(place_pos_above, vel=VELOCITY, acc=ACC)
@@ -400,7 +401,7 @@ class RobotController(Node):
         movel(counter_pos, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
 
-        gripper.open_gripper()
+        gripper.move_gripper(750)  # 그리퍼 열기
         time.sleep(1)
 
         # 다시 위로 복귀
