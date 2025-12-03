@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import yaml
 from scipy.spatial.transform import Rotation
 import numpy as np
 import rclpy
@@ -19,23 +20,13 @@ import cv2.aruco as aruco
 
 package_path = get_package_share_directory("burger")
 
-# YOLO 클래스 ID 매핑
-ingredient_dict = {
-    1: "bun_bottom",
-    2: "bun_top",
-    3: "cheese",
-    4: "lettuce",
-    5: "onion",
-    6: "patty",
-    7: "shrimp",
-    8: "tomato",
-}
-
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
+
 BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-COUNTER_POS = [150, 250, 50, 105, 180, 105]
+COUNTER_POS = [215, 250, 5, 105, 180, 105]
+INGREDIENT_THICKNESS = 20.0
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -49,6 +40,7 @@ try:
 except ImportError as e:
     print(f"Error importing DSR_ROBOT2: {e}")
     sys.exit()
+
 
 # ================================
 #     GRIPPER INITIALIZATION
@@ -65,26 +57,33 @@ class RobotController(Node):
     def __init__(self):
         super().__init__("pick_and_place_integrated")
 
-        # 기본 메뉴 구성
-        self.menu_db = {
-            "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
-            "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
-            "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
-        }
+        # 중앙 설정 파일(recipes.yaml) 로드
+        try:
+            package_share_directory = os.path.expanduser(
+                "/home/changbeom/ros2_ws/src/DoosanBootcamp3rd/dsr_rokey/burger/burger"
+            )
+            config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
 
-        # 한국어 옵션 명 → YOLO 클래스로 매핑
-        self.ingredient_map_korean_to_yolo = {
-            "빵": "bun_bottom",
-            "불고기": "patty",
-            "치즈": "cheese",
-            "상추": "lettuce",
-            "토마토": "tomato",
-            "새우": "shrimp",
-            "번": "bun_bottom",
-        }
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
+
+            korean_menu_db = config['menu_db']
+            self.ingredient_map_korean_to_yolo = config['ingredient_map_korean_to_yolo']
+
+            self.menu_db = {}
+            for menu_name, ingredients in korean_menu_db.items():
+                self.menu_db[menu_name] = [
+                    self.ingredient_map_korean_to_yolo.get(item, item)
+                    for item in ingredients
+                ]
+
+            self.get_logger().info(f"Successfully loaded recipes.")
+
+        except Exception as e:
+            self.get_logger().fatal(f"Failed to load recipes: {e}")
+            raise e
 
         self.order_queue = deque(maxlen=1)
-
         self.init_robot()
 
         # YOLO 기반 3D 좌표 서비스
@@ -93,22 +92,21 @@ class RobotController(Node):
             self.get_logger().info("Waiting for depth position service...")
         self.depth_request = SrvDepthPosition.Request()
 
-        # ArUco 마커 3D 좌표 서비스
+        # ArUco 마커 서비스
         self.marker_client = self.create_client(SrvDepthPosition, "/get_marker_position")
         while not self.marker_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("Waiting for marker position service...")
         self.marker_request = SrvDepthPosition.Request()
 
-        # /cmd 토픽 구독
         self.order_subscription = self.create_subscription(
             Order, "/cmd", self.order_callback, QoSProfile(depth=10)
         )
 
         self.get_logger().info("Integrated Robot Controller is running.")
 
+
     ### 주문 콜백 ###
     def order_callback(self, msg):
-        self.get_logger().info("New order received, adding to queue.")
         self.order_queue.append(msg)
 
     ### Pose 변환 ###
@@ -128,23 +126,14 @@ class RobotController(Node):
         td_coord = np.dot(base2cam, coord)
         return td_coord[:3]
 
+
+    # ====================================
+    #     SWEEP FOR BOX MARKERS
+    # ====================================
     def sweep_find_marked_box(
-        self,
-        x=600.0,
-        y_min=-100.0,
-        y_max=100.0,
-        y_step=50.0,
-        z=200.0,
-        rx=105.0,
-        ry=180.0,
-        rz=105.0,
-        candidate_ids=None,
-    ):
-        """
-        x=600, z=200, RPY=[105,180,105] 고정하고
-        y를 y_min ~ y_max까지 y_step 간격으로 움직이며
-        /get_marker_position 서비스로 마커를 탐색한다.
-        """
+        self, x=600.0, y_min=-100.0, y_max=100.0, y_step=50.0,
+        z=200.0, rx=105.0, ry=180.0, rz=105.0, candidate_ids=None):
+
         if candidate_ids is None:
             candidate_ids = [0, 1, 2, 3, 4, 5]
 
@@ -153,7 +142,6 @@ class RobotController(Node):
         y = y_min
         while y <= y_max:
             target_pose = [x, y, z, rx, ry, rz]
-            self.get_logger().info(f"[SWEEP] move to pose: {target_pose}")
             movel(target_pose, vel=VELOCITY, acc=ACC)
             mwait()
             time.sleep(0.5)
@@ -162,16 +150,11 @@ class RobotController(Node):
                 self.marker_request.target = str(mid)
                 future = self.marker_client.call_async(self.marker_request)
                 rclpy.spin_until_future_complete(self, future)
-
                 if not future.result():
                     continue
 
                 cam_xyz = future.result().depth_position
-
                 if len(cam_xyz) == 3 and sum(cam_xyz) != 0.0:
-                    self.get_logger().info(
-                        f"[SWEEP] Marker {mid} detected at {list(cam_xyz)} (y={y})"
-                    )
                     detected_ids.append(mid)
 
             if detected_ids:
@@ -181,156 +164,142 @@ class RobotController(Node):
 
         return detected_ids
 
+
+    # ====================================
+    #  박스 1개를 카운터로 옮기는 함수
+    # ====================================
     def move_to_marker(self, marker_id: int, counter_pos=None):
-        """
-        마커 id 위치로 가서 박스를 집어 counter_pos로 옮김.
-        (마커 중심 좌표는 지금은 사용하지 않고, 박스는 counter_pos 로 놓는다.)
-        """
+
+        # 1) 마커 좌표 읽기
         self.marker_request.target = str(marker_id)
         future = self.marker_client.call_async(self.marker_request)
         rclpy.spin_until_future_complete(self, future)
-
         if not future.result():
-            self.get_logger().error("Marker service call failed")
             return
 
         cam_xyz = future.result().depth_position
-        self.get_logger().info(f"[DEBUG] cam_xyz (camera coords): {list(cam_xyz)}")
 
         if len(cam_xyz) != 3 or sum(cam_xyz) == 0.0:
             self.get_logger().warn("Invalid marker position received")
             return
 
         robot_posx = get_current_posx()[0]
-        self.get_logger().info(f"[DEBUG] robot_posx (current tcp): {robot_posx}")
-
         gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-        base_xyz = self.transform_to_base(cam_xyz, gripper2cam_path, robot_posx)
-        self.get_logger().info(f"[DEBUG] base_xyz (before offset): {base_xyz}")
 
+        # 2) transform
+        base_xyz = self.transform_to_base(cam_xyz, gripper2cam_path, robot_posx)
         bx, by, bz = base_xyz
 
-        # 박스 집기용 오프셋
-        bx -= 50.0
-        bz += 50.0
+        # 박스 픽업 offset
+        bx -= 50
+        bz += 50
 
         target_pos = [bx, by, bz, robot_posx[3], robot_posx[4], robot_posx[5]]
-        self.get_logger().info(f"[DEBUG] Final target_pos (TCP target): {target_pos}")
 
-        # 박스를 counter_pos로 옮김
-        self.pick_and_place_target(target_pos, counter_pos=counter_pos)
+        # counter pos offset
+        counter_box_pos = counter_pos.copy()
+        counter_box_pos[0] -= 65
+        counter_box_pos[2] += 50
 
-        mwait()
+        # 박스 픽업 → counter_pos로 옮김
+        self.pick_and_place_target(target_pos, width_val=0, counter_pos=counter_box_pos)
+
         self.init_robot()
 
+
+    # ====================================
+    #        🔥 핵심: 전체 로직 재구성
+    # ====================================
     def robot_control(self):
         if not self.order_queue:
             return
 
-        # 1) 먼저 마커가 붙어 있는 박스를 찾기
-        marker_ids = self.sweep_find_marked_box(
-            x=600.0,
-            y_min=-200.0,
-            y_max=100.0,
-            y_step=50.0,
-            z=150.0,
-            rx=105.0,
-            ry=180.0,
-            rz=105.0,
-        )
-
-        if not marker_ids:
-            self.get_logger().warn("박스가 없습니다.")
-            return
-
-        # 2) 주문 꺼내기
         order = self.order_queue.popleft()
-        self.get_logger().info(f"Processing order: {order.notes}")
+        burgers = order.burgers
+        num_burgers = len(burgers)
 
-        for burger_idx, burger in enumerate(order.burgers):
-            self.get_logger().info(f"--- Making a '{burger.menu_name}' (idx={burger_idx}) ---")
+        # ================================
+        #   1) 주문 수량만큼 박스를 먼저 전부 배치
+        # ================================
+        box_positions = []
 
-            # x = 150부터 150씩 증가 (카운터에서 박스 내려놓을 위치)
-            counter_pos = COUNTER_POS.copy()
-            counter_pos[0] = 150 + burger_idx * 150.0
-            self.get_logger().info(f"[COUNTER POS] x={counter_pos[0]}, y={counter_pos[1]}")
+        for i in range(num_burgers):
+            counter_pos_i = COUNTER_POS.copy()
+            counter_pos_i[0] += i * 200.0
 
-            # 이 버거에 사용할 마커 id 선택
-            if burger_idx < len(marker_ids):
-                marker = marker_ids[burger_idx]
-            else:
-                marker = marker_ids[-1]
-
-            self.get_logger().info(
-                f"[ROBOT_CONTROL] Using marker id: {marker} for burger idx {burger_idx}"
+            marker_ids = self.sweep_find_marked_box(
+                x=600.0, y_min=-200.0, y_max=100.0, y_step=50.0,
+                z=150.0, rx=105.0, ry=180.0, rz=105.0
             )
 
-            # 3) 박스를 먼저 해당 counter_pos로 옮기기
-            self.move_to_marker(marker, counter_pos=counter_pos)
+            if not marker_ids:
+                self.get_logger().warn("더 이상 사용할 박스가 없습니다.")
+                break
 
-            # 4) 이 버거의 재료 스택 만들기
-            final_assembly_list = list(self.menu_db.get(burger.menu_name, []))
+            marker = marker_ids[0]
 
+            self.move_to_marker(marker, counter_pos=counter_pos_i)
+
+            box_positions.append(counter_pos_i.copy())
+
+        if len(box_positions) != num_burgers:
+            return
+
+        # ================================
+        #   2) 각 박스 위에 각 버거 재료 쌓기
+        # ================================
+        for b_idx, burger in enumerate(burgers):
+            final_list = list(self.menu_db[burger.menu_name])
+
+            # 옵션 처리
             for option in burger.options:
-                self.get_logger().info(
-                    f"[DEBUG] option.item={option.item}, type={option.type}, amount={option.amount}"
-                )
-
                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
                 if not yolo_item:
                     continue
 
                 if option.type == "add":
                     for _ in range(option.amount):
-                        if "bun_top" in final_assembly_list:
-                            idx = final_assembly_list.index("bun_top")
-                            final_assembly_list.insert(idx, yolo_item)
+                        if "bun_top" in final_list:
+                            idx_bt = final_list.index("bun_top")
+                            final_list.insert(idx_bt, yolo_item)
                         else:
-                            final_assembly_list.append(yolo_item)
+                            final_list.append(yolo_item)
 
                 elif option.type == "remove":
                     for _ in range(option.amount):
-                        if yolo_item in final_assembly_list:
-                            final_assembly_list.remove(yolo_item)
+                        if yolo_item in final_list:
+                            final_list.remove(yolo_item)
 
-            self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
+            # 현재 박스 위치
+            base_box_pos = box_positions[b_idx]
 
-            # 5) 재료를 "박스 내려놓은 자리(counter_pos)" 위에 쌓기
-            # ====================================
-            #           PICK & PLACE LOOP
-            # ====================================
-            for idx, ingredient_name in enumerate(final_assembly_list):
-                self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-
-                self.depth_request.target = ingredient_name
-
-                self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
+            # 재료 쌓기
+            for layer, ingredient in enumerate(final_list):
+                self.depth_request.target = ingredient
                 depth_future = self.depth_client.call_async(self.depth_request)
                 rclpy.spin_until_future_complete(self, depth_future)
-
                 if not depth_future.result() or sum(depth_future.result().depth_position) == 0:
-                    self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
                     continue
 
                 result = depth_future.result().depth_position.tolist()
-                gripper2cam_path = os.path.join(
-                    package_path, "resource", "T_gripper2camera.npy"
-                )
                 robot_posx = get_current_posx()[0]
+
+                gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
 
-                td_coord[2] += 50
-                td_coord[2] = max(td_coord[2], 2)
+                td_coord[1] -= 15
+                td_coord[2] -= 10
 
-                # 픽업용 target_pos (재료 있는 곳)
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-                counter_pos = COUNTER_POS.copy()
-                counter_pos[2] += idx * INGREDIENT_THICKNESS
 
-                self.pick_and_place_target(target_pos,counter_pos)
+                # 박스 위 층 쌓기
+                place_pos = base_box_pos.copy()
+                place_pos[2] += layer * INGREDIENT_THICKNESS
+
+                self.pick_and_place_target(target_pos, width_val=600, counter_pos=place_pos)
+
                 self.init_robot()
 
-            self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
 
     # ================================
     #            ROBOT MOVES
@@ -338,46 +307,40 @@ class RobotController(Node):
     def init_robot(self):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
-        gripper.open_gripper()
+        gripper.move_gripper(1000)
         mwait()
 
-    def pick_and_place_target(self, target_pos, counter_pos=None):
+    def pick_and_place_target(self, target_pos, width_val, counter_pos=None):
         if counter_pos is None:
             counter_pos = COUNTER_POS
 
-        # 1) picking 위로 이동
         pick_pos_above = target_pos.copy()
         pick_pos_above[2] += 100.0
 
-        # 픽업 단계
         movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
 
         movel(target_pos, vel=VELOCITY / 3, acc=ACC / 3)
         mwait()
 
-        gripper.close_gripper()
-        time.sleep(1)
+        gripper.move_gripper(width_val, force_val=100)
+        time.sleep(3)
 
         movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
 
-        # 내려놓기용 상단 위치 만들기
         place_pos_above = counter_pos.copy()
-        place_pos_above[2] += 150.0
+        place_pos_above[2] += 100.0
 
-        # 내려놓기 접근 = 위로 먼저 이동
         movel(place_pos_above, vel=VELOCITY, acc=ACC)
         mwait()
 
-        # 내려놓기
         movel(counter_pos, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
 
-        gripper.open_gripper()
+        gripper.move_gripper(750)
         time.sleep(1)
 
-        # 다시 위로 복귀
         movel(place_pos_above, vel=VELOCITY, acc=ACC)
         mwait()
 
