@@ -28,6 +28,7 @@ VELOCITY, ACC = 60, 60
 
 BUCKET_POS = [545.5, -242.6, 174.4, 156.4, 180.0, -112.5]
 COUNTER_POS = [215, 250, 5, 105, 180, 105]
+SET_PATTY_POS = [380, -150, 5, 156.4, 180.0, -112.5]
 INGREDIENT_THICKNESS = 20.0
 
 DR_init.__dsr__id = ROBOT_ID
@@ -100,6 +101,7 @@ class RobotController(Node):
 
         self.order_queue = deque(maxlen=1)
         self.init_robot()
+        self.raw_patty_positions = []
 
         # YOLO 기반 3D 좌표 서비스
         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
@@ -282,8 +284,13 @@ class RobotController(Node):
 
         self.get_logger().info(f"[ASSEMBLE] Totals: {final_order['totals']}")
 
+        totals = final_order["totals"]
+        ordered_totals = {ing: totals[ing] for ing in totals if ing != "bun_top"}
+        if "bun_top" in totals:
+            ordered_totals["bun_top"] = totals["bun_top"]
+
         # 재료별로 총 수량만큼 반복
-        for ing_name, total_qty in final_order["totals"].items():
+        for ing_name, total_qty in ordered_totals.items():
             self.get_logger().info(f"[ASSEMBLE] Processing ingredient '{ing_name}' x {total_qty}")
 
             # 1) 재료 위치(베이스 좌표) 얻기
@@ -462,7 +469,7 @@ class RobotController(Node):
         td_coord[0] -= 13  # X-축 오프셋
         td_coord[1] -= 3
         td_coord[2] -= 10
-        
+        self.raw_patty_positions.append(td_coord.copy())
         # Create a clean 45-degree tilt orientation
         # By setting the final Z-rotation (rz) to 0, we avoid a 'skewed' tilt.
         fixed_rx = 0.0
@@ -470,6 +477,7 @@ class RobotController(Node):
         fixed_rz = 90.0    # 그리퍼를 정면으로 정렬
         extra=20
         target_pos = td_coord + [fixed_rx, fixed_ry-extra, fixed_rz]
+        
 
         # 4. Execute Pick-Flip-Place Sequence
         # 4.1. Pick up the patty
@@ -484,6 +492,8 @@ class RobotController(Node):
         time.sleep(2)
         movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
+
+       
         # ⭐ pick 이후 20도 추가 기울이기
         # j_now = get_current_posj()
         # j_tilt_more = list(j_now)
@@ -494,45 +504,75 @@ class RobotController(Node):
 
         # 4.2. Flip the patty
         # By performing a joint move on J6 (wrist roll), we can flip the patty.
+        # 4.2. Flip the patty
+        self.get_logger().info("=== [4.2] Start patty flip ===")
+
         pos_before_flip = get_current_posx()[0]
         j_before_flip = get_current_posj()
-        
+
+        self.get_logger().info(f"[BeforeFlip] Pose = {pos_before_flip}")
+        self.get_logger().info(f"[BeforeFlip] Joints = {j_before_flip}")
+
         j_after_flip = list(j_before_flip)
-        j_after_flip[5] += 180.0 # Add 180 degrees to J6 (wrist roll)
-        
+        j_after_flip[5] += 180.0  # wrist roll 180 degrees
+
+        self.get_logger().info(f"[FlipCommand] Target Joints(after +180 on J6): {j_after_flip}")
+
+# 실행
+        self.get_logger().info("[ACTION] Rotating J6 by +180 degrees...")
         movej(j_after_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
         mwait()
 
+# After flip
         pos_after_flip = get_current_posx()[0]
+        j_after = get_current_posj()
 
-        # 4.3. Place the patty back
-        # Use the new orientation with the original XY position.
+        self.get_logger().info(f"[AfterFlip] Pose = {pos_after_flip}")
+        self.get_logger().info(f"[AfterFlip] Joints = {j_after}")
+
+        self.get_logger().info("=== [4.2] Flip complete ===")
+
+
+# 4.3 Place the patty back
+        self.get_logger().info("=== [4.3] Start placing flipped patty ===")
+
         place_pos_flipped = target_pos.copy()
         place_pos_flipped[3:] = pos_after_flip[3:]
-        
-        # Also need to account for the TCP's XYZ displacement caused by the joint move.
+
         xyz_displacement = np.array(pos_after_flip[:3]) - np.array(pos_before_flip[:3])
         place_pos_flipped[:3] = np.array(target_pos[:3]) - xyz_displacement
+
+        self.get_logger().info(f"[PlaceCalc] target_pos(before correction) = {target_pos}")
+        self.get_logger().info(f"[PlaceCalc] xyz_displacement = {xyz_displacement}")
+        self.get_logger().info(f"[PlaceCalc] place_pos_flipped(final) = {place_pos_flipped}")
 
         place_pos_flipped_above = place_pos_flipped.copy()
         place_pos_flipped_above[2] += 10.0
 
-        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
-        # mwait()
+        self.get_logger().info(f"[ACTION] Moving to place_pos_flipped_above = {place_pos_flipped_above}")
+
         movel(place_pos_flipped_above, vel=VELOCITY / 3, acc=ACC / 3)
         mwait()
 
-        gripper.move_gripper(750) # Release the patty
-        time.sleep(1)
-        movej([0,0,90,0,90,0],vel=VELOCITY, acc=ACC)
-        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
-        # mwait()
-        # ⭐ 여기서 orientation 완전 복귀
-        # movej(j_before_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
-        # mwait()
-        self.get_logger().info("Raw patty has been flipped.")
-        # self.init_robot()
+        self.get_logger().info("=== Patty placed after flip ===")
 
+        gripper.move_gripper(750)
+
+        self.get_logger().info("=== Patty has been flipped  ===")
+
+        
+    def set_patty(self, final_order):
+
+        self.raw_patty_positions = [] 
+
+        patty_count = final_order["totals"].get("patty", 0)
+
+        for i in range(patty_count):
+            self.flip_raw_patty()
+
+        
+        
+    
     def robot_control(self):
         if not self.order_queue:
             return
@@ -542,12 +582,14 @@ class RobotController(Node):
         burgers = order.burgers
         num_burgers = len(burgers)
         
-        self.flip_raw_patty()
 
         try:
             # 2) final_order 빌드 (버거별 재료 + totals)
             final_order = self.build_final_order_from_order(order)
             self.get_logger().info(f"[ORDER] Final order totals: {final_order['totals']}")
+
+            self.set_patty(final_order)
+
 
             # 3) 각 버거 박스 미리 찾아서 counter로 배치 (박스당 counter_pos, marker_id, stack 초기화)
             self.prepare_boxes_for_order(final_order)
@@ -587,6 +629,7 @@ class RobotController(Node):
 
         # --- 2) 재료 개수에 따라 깊게 집기 ---
         pick_pos_deep = target_pos.copy()
+        pick_pos_deep[1] -= 5
         pick_pos_deep[2] -= 3
         pick_pos_deep[2] -= total_qty * 10  # total_qty에 비례하여 깊이 조절
         movel(pick_pos_deep, vel=VELOCITY / 3, acc=ACC / 3)
