@@ -98,25 +98,6 @@ class RobotController(Node):
             "번": "bun_bottom",
         }
 
-            with open(config_path, 'r') as file:
-                config = yaml.safe_load(file)
-
-            korean_menu_db = config['menu_db']
-            self.ingredient_map_korean_to_yolo = config['ingredient_map_korean_to_yolo']
-
-            self.menu_db = {}
-            for menu_name, ingredients in korean_menu_db.items():
-                self.menu_db[menu_name] = [
-                    self.ingredient_map_korean_to_yolo.get(item, item)
-                    for item in ingredients
-                ]
-
-            self.get_logger().info(f"Successfully loaded recipes.")
-
-        except Exception as e:
-            self.get_logger().fatal(f"Failed to load recipes: {e}")
-            raise e
-
         self.order_queue = deque(maxlen=1)
         self.init_robot()
 
@@ -570,6 +551,7 @@ class RobotController(Node):
 
             # 3) 각 버거 박스 미리 찾아서 counter로 배치 (박스당 counter_pos, marker_id, stack 초기화)
             self.prepare_boxes_for_order(final_order)
+            self.init_robot()
 
             # 4) totals 기준으로 재료를 하나씩 가져와 각 박스에 분배
             self.assemble_from_totals(final_order)
@@ -675,4 +657,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-g
