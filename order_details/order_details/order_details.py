@@ -38,7 +38,7 @@ class OrderDetails(Node):
         # 중앙 설정 파일(recipes.yaml) 로드
         try:
             # 'burger' 패키지의 공유 디렉토리 경로를 찾음
-            package_share_directory = os.path.expanduser("/home/nj/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            package_share_directory = os.path.expanduser("/home/rokey/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
             # 설정 파일의 전체 경로 구성
             config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
             

@@ -3,7 +3,7 @@ import numpy as np
 from ament_index_python.packages import get_package_share_directory
 
 PACKAGE_NAME = 'burger'
-MODEL_PATH = f'/home/nj/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger/cvs/face_detection_yunet_2023mar.onnx'
+MODEL_PATH = f'/home/rokey/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger/cvs/face_detection_yunet_2023mar.onnx'
 
 class YuNetModel:
     def __init__(self, model_path=MODEL_PATH, conf_threshold=0.9, nms_threshold=0.3, top_k=5000):
