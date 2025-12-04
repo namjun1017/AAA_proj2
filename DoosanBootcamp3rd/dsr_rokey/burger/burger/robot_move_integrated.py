@@ -1,901 +1,3 @@
-# # # import os
-# # # import time
-# # # import sys
-# # # from scipy.spatial.transform import Rotation
-# # # import numpy as np
-# # # import rclpy
-# # # from rclpy.node import Node
-# # # from rclpy.qos import QoSProfile
-# # # import DR_init
-# # # from collections import Counter, deque
-
-# # # from od_msg.srv import SrvDepthPosition
-# # # from ament_index_python.packages import get_package_share_directory
-# # # from burger.onrobot import RG
-# # # from order_interfaces.msg import Order
-
-# # # package_path = get_package_share_directory("burger")
-
-# # # # --- [수정된 부분 1] ---
-# # # # [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# # # # 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-# # # ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# # # # ----------------------
-
-# # # # for single robot
-# # # ROBOT_ID = "dsr01"
-# # # ROBOT_MODEL = "m0609"
-# # # VELOCITY, ACC = 60, 60
-# # # BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-
-# # # DR_init.__dsr__id = ROBOT_ID
-# # # DR_init.__dsr__model = ROBOT_MODEL
-
-# # # rclpy.init()
-# # # dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
-# # # DR_init.__dsr__node = dsr_node
-
-# # # try:
-# # #     from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans
-# # # except ImportError as e:
-# # #     print(f"Error importing DSR_ROBOT2: {e}")
-# # #     sys.exit()
-
-# # # ########### Gripper Setup. Do not modify this area ############
-
-# # # GRIPPER_NAME = "rg2"
-# # # TOOLCHANGER_IP = "192.168.1.1"
-# # # TOOLCHANGER_PORT = "502"
-# # # gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
-
-
-# # # ########### Robot Controller ############
-
-
-# # # class RobotController(Node):
-# # #     def __init__(self):
-# # #         super().__init__("pick_and_place_integrated")
-
-# # #         # 메뉴 DB와 재료 이름 매핑
-# # #         self.menu_db = {
-# # #             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
-# # #             "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
-# # #             "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
-# # #         }
-# # #         self.ingredient_map_korean_to_yolo = {
-# # #             "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce",
-# # #             "토마토": "tomato", "새우": "shrimp", "번": "bun_bottom"
-# # #         }
-        
-# # #         # ROS 토픽에서 받은 주문을 저장할 큐
-# # #         self.order_queue = deque(maxlen=1)
-
-# # #         self.init_robot()
-# # #         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
-# # #         while not self.depth_client.wait_for_service(timeout_sec=3.0):
-# # #             self.get_logger().info("Waiting for depth position service...")
-# # #         self.depth_request = SrvDepthPosition.Request()
-
-# # #         # /cmd 토픽 구독자 설정
-# # #         self.order_subscription = self.create_subscription(
-# # #             Order, '/cmd', self.order_callback, QoSProfile(depth=10)
-# # #         )
-# # #         self.get_logger().info("Integrated Robot Controller is running.")
-
-# # #     def order_callback(self, msg):
-# # #         """ /cmd 토픽 메시지를 받으면 큐에 추가 """
-# # #         self.get_logger().info("New order received, adding to queue.")
-# # #         self.order_queue.append(msg)
-
-# # #     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
-# # #         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
-# # #         T = np.eye(4)
-# # #         T[:3, :3] = R
-# # #         T[:3, 3] = [x, y, z]
-# # #         return T
-
-# # #     def transform_to_base(self, camera_coords, gripper2cam_path, robot_pos):
-# # #         gripper2cam = np.load(gripper2cam_path)
-# # #         coord = np.append(np.array(camera_coords), 1)
-# # #         x, y, z, rx, ry, rz = robot_pos
-# # #         base2gripper = self.get_robot_pose_matrix(x, y, z, rx, ry, rz)
-# # #         base2cam = base2gripper @ gripper2cam
-# # #         td_coord = np.dot(base2cam, coord)
-# # #         return td_coord[:3]
-
-# # #     def robot_control(self):
-# # #         # 큐에 처리할 주문이 없으면 아무것도 하지 않고 반환
-# # #         if not self.order_queue:
-# # #             return
-
-# # #         # 큐에서 주문을 하나 꺼냄
-# # #         order = self.order_queue.popleft()
-# # #         self.get_logger().info(f"Processing order: {order.notes}")
-
-# # #         # 주문에 포함된 모든 버거를 순서대로 조립
-# # #         for burger in order.burgers:
-# # #             self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
-            
-# # #             # 조립할 재료 목록 생성
-# # #             base_ingredients = self.menu_db.get(burger.menu_name, [])
-# # #             ingredient_counts = Counter(base_ingredients)
-# # #             for option in burger.options:
-# # #                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
-# # #                 if yolo_item:
-# # #                     if option.type == 'add':
-# # #                         ingredient_counts[yolo_item] += option.amount
-# # #                     elif option.type == 'remove':
-# # #                         ingredient_counts[yolo_item] = max(0, ingredient_counts[yolo_item] - option.amount)
-            
-# # #             final_assembly_list = []
-# # #             for item in base_ingredients:
-# # #                  count = ingredient_counts.pop(item, 0)
-# # #                  if count > 0:
-# # #                     final_assembly_list.extend([item] * count)
-# # #             for item, count in ingredient_counts.items():
-# # #                 if count > 0:
-# # #                     final_assembly_list.extend([item] * count)
-
-# # #             self.get_logger().info(f"Assembly list: {final_assembly_list}")
-
-# # #             # 각 재료를 순서대로 집어서 놓기
-# # #             for ingredient_name in final_assembly_list:
-# # #                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-                
-# # #                 # 원본 코드의 로직을 재사용하여 재료 하나를 처리
-# # #                 self.depth_request.target = ingredient_name
-                
-# # #                 # 서비스 호출 및 결과 대기 (spin_until_future_complete는 블로킹 방식)
-# # #                 self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
-# # #                 depth_future = self.depth_client.call_async(self.depth_request)
-# # #                 rclpy.spin_until_future_complete(self, depth_future)
-
-# # #                 if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
-# # #                     self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
-# # #                     continue
-
-# # #                 result = depth_future.result().depth_position.tolist()
-# # #                 self.get_logger().info(f"Received depth position: {result}")
-
-# # #                 gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-# # #                 robot_posx = get_current_posx()[0]
-# # #                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
-
-# # #                 td_coord[2] += 50  # DEPTH_OFFSET
-# # #                 td_coord[2] = max(td_coord[2], 2)  # MIN_DEPTH
-
-# # #                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-
-# # #                 self.get_logger().info(f"Target position: {target_pos}")
-# # #                 self.pick_and_place_target(target_pos)
-# # #                 self.init_robot()
-            
-# # #             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
-
-
-# # #     def init_robot(self):
-# # #         JReady = [0, 0, 90, 0, 90, 0]
-# # #         movej(JReady, vel=VELOCITY, acc=ACC)
-# # #         gripper.open_gripper()
-# # #         mwait()
-
-# # #     def pick_and_place_target(self, target_pos):
-# # #         # 이 함수는 하나의 재료를 집어서 고정된 위치(BUCKET_POS)에 놓는 동작을 가정합니다.
-# # #         # 간단한 시연을 위해, 집은 후 바로 BUCKET_POS로 이동합니다.
-        
-# # #         # 집기
-# # #         pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
-# # #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# # #         mwait()
-# # #         movel(target_pos, vel=VELOCITY/2, acc=ACC/2)
-# # #         mwait()
-# # #         gripper.close_gripper()
-# # #         time.sleep(1)
-# # #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# # #         mwait()
-
-# # #         # 놓기 (고정된 위치)
-# # #         self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
-# # #         movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
-# # #         mwait()
-# # #         gripper.open_gripper()
-# # #         time.sleep(1)
-
-
-# # # def main(args=None):
-# # #     node = RobotController()
-# # #     # 메인 루프: rclpy.ok()가 참인 동안 계속 실행
-# # #     while rclpy.ok():
-# # #         # spin_once를 호출하여 콜백 처리 (논블로킹)
-# # #         rclpy.spin_once(node, timeout_sec=0.1)
-# # #         # 로봇 제어 로직 실행
-# # #         node.robot_control()
-
-# # #     node.destroy_node()
-# # #     rclpy.shutdown()
-
-
-# # # if __name__ == "__main__":
-# # #     main()
-# # import os
-# # import time
-# # import sys
-# # from scipy.spatial.transform import Rotation
-# # import numpy as np
-# # import rclpy
-# # from rclpy.node import Node
-# # from rclpy.qos import QoSProfile
-# # import DR_init
-# # from collections import Counter, deque
-
-# # from od_msg.srv import SrvDepthPosition
-# # from ament_index_python.packages import get_package_share_directory
-# # from burger.onrobot import RG
-# # from order_interfaces.msg import Order
-
-# # package_path = get_package_share_directory("burger")
-
-# # # --- [수정된 부분 1] ---
-# # # [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# # # 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-# # ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# # # ----------------------
-
-# # # for single robot
-# # ROBOT_ID = "dsr01"
-# # ROBOT_MODEL = "m0609"
-# # VELOCITY, ACC = 60, 60
-# # BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-
-# # DR_init.__dsr__id = ROBOT_ID
-# # DR_init.__dsr__model = ROBOT_MODEL
-
-# # rclpy.init()
-# # dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
-# # DR_init.__dsr__node = dsr_node
-
-# # try:
-# #     from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans
-# # except ImportError as e:
-# #     print(f"Error importing DSR_ROBOT2: {e}")
-# #     sys.exit()
-
-# # ########### Gripper Setup. Do not modify this area ############
-
-# # GRIPPER_NAME = "rg2"
-# # TOOLCHANGER_IP = "192.168.1.1"
-# # TOOLCHANGER_PORT = "502"
-# # gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
-
-
-# # ########### Robot Controller ############
-
-
-# # class RobotController(Node):
-# #     def __init__(self):
-# #         super().__init__("pick_and_place_integrated")
-
-# #         # 메뉴 DB와 재료 이름 매핑
-# #         self.menu_db = {
-# #             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
-# #             "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
-# #             "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
-# #         }
-# #         self.ingredient_map_korean_to_yolo = {
-# #             "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce",
-# #             "토마토": "tomato", "새우": "shrimp", "번": "bun_bottom"
-# #         }
-        
-# #         # ROS 토픽에서 받은 주문을 저장할 큐
-# #         self.order_queue = deque(maxlen=1)
-
-# #         self.init_robot()
-# #         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
-# #         while not self.depth_client.wait_for_service(timeout_sec=3.0):
-# #             self.get_logger().info("Waiting for depth position service...")
-# #         self.depth_request = SrvDepthPosition.Request()
-
-# #         # /cmd 토픽 구독자 설정
-# #         self.order_subscription = self.create_subscription(
-# #             Order, '/cmd', self.order_callback, QoSProfile(depth=10)
-# #         )
-# #         self.get_logger().info("Integrated Robot Controller is running.")
-
-# #     def order_callback(self, msg):
-# #         """ /cmd 토픽 메시지를 받으면 큐에 추가 """
-# #         self.get_logger().info("New order received, adding to queue.")
-# #         self.order_queue.append(msg)
-
-# #     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
-# #         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
-# #         T = np.eye(4)
-# #         T[:3, :3] = R
-# #         T[:3, 3] = [x, y, z]
-# #         return T
-
-# #     def transform_to_base(self, camera_coords, gripper2cam_path, robot_pos):
-# #         gripper2cam = np.load(gripper2cam_path)
-# #         coord = np.append(np.array(camera_coords), 1)
-# #         x, y, z, rx, ry, rz = robot_pos
-# #         base2gripper = self.get_robot_pose_matrix(x, y, z, rx, ry, rz)
-# #         base2cam = base2gripper @ gripper2cam
-# #         td_coord = np.dot(base2cam, coord)
-# #         return td_coord[:3]
-
-# #     def robot_control(self):
-# #         # 큐에 처리할 주문이 없으면 아무것도 하지 않고 반환
-# #         if not self.order_queue:
-# #             return
-
-# #         # 큐에서 주문을 하나 꺼냄
-# #         order = self.order_queue.popleft()
-# #         self.get_logger().info(f"Processing order: {order.notes}")
-
-# #         # 주문에 포함된 모든 버거를 순서대로 조립
-# #         for burger in order.burgers:
-# #             self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
-            
-# #             # --- 수정된 옵션 처리 로직 ---
-# #             # 1. 기본 재료 목록으로 리스트를 시작합니다.
-# #             base_ingredients = self.menu_db.get(burger.menu_name, [])
-# #             final_assembly_list = list(base_ingredients)
-            
-# #             # 2. 옵션을 순회하며 재료를 추가하거나 제거합니다.
-# #             for option in burger.options:
-# #                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
-# #                 if not yolo_item:
-# #                     self.get_logger().warn(f"Option item '{option.item}' not found in map. Skipping.")
-# #                     continue
-
-# #                 if option.type == 'add':
-# #                     # 'add'의 경우, 수량만큼 리스트에 추가합니다.
-# #                     for _ in range(option.amount):
-# #                         # 조립 순서를 고려하여 위쪽 빵(bun_top) 바로 앞에 추가합니다.
-# #                         try:
-# #                             top_bun_index = final_assembly_list.index('bun_top')
-# #                             final_assembly_list.insert(top_bun_index, yolo_item)
-# #                         except ValueError:
-# #                             # 위쪽 빵이 없으면 그냥 맨 뒤에 추가합니다.
-# #                             final_assembly_list.append(yolo_item)
-                
-# #                 elif option.type == 'remove':
-# #                     # 'remove'의 경우, 수량만큼 리스트에서 제거합니다.
-# #                     for _ in range(option.amount):
-# #                         try:
-# #                             final_assembly_list.remove(yolo_item)
-# #                         except ValueError:
-# #                             self.get_logger().warn(f"Tried to remove '{yolo_item}' which was not in the assembly list.")
-# #             # --- 로직 수정 끝 ---
-
-# #             self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
-
-# #             # 각 재료를 순서대로 집어서 놓기
-# #             for ingredient_name in final_assembly_list:
-# #                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-                
-# #                 # 원본 코드의 로직을 재사용하여 재료 하나를 처리
-# #                 self.depth_request.target = ingredient_name
-                
-# #                 # 서비스 호출 및 결과 대기 (spin_until_future_complete는 블로킹 방식)
-# #                 self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
-# #                 depth_future = self.depth_client.call_async(self.depth_request)
-# #                 rclpy.spin_until_future_complete(self, depth_future)
-
-# #                 if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
-# #                     self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
-# #                     continue
-
-# #                 result = depth_future.result().depth_position.tolist()
-# #                 self.get_logger().info(f"Received depth position: {result}")
-
-# #                 gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-# #                 robot_posx = get_current_posx()[0]
-# #                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
-
-# #                 td_coord[2] += 50  # DEPTH_OFFSET
-# #                 td_coord[2] = max(td_coord[2], 2)  # MIN_DEPTH
-
-# #                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-
-# #                 self.get_logger().info(f"Target position: {target_pos}")
-# #                 self.pick_and_place_target(target_pos)
-# #                 self.init_robot()
-            
-# #             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
-
-
-# #     def init_robot(self):
-# #         JReady = [0, 0, 90, 0, 90, 0]
-# #         movej(JReady, vel=VELOCITY, acc=ACC)
-# #         gripper.open_gripper()
-# #         mwait()
-
-# #     def pick_and_place_target(self, target_pos):
-# #         # 이 함수는 하나의 재료를 집어서 고정된 위치(BUCKET_POS)에 놓는 동작을 가정합니다.
-# #         # 간단한 시연을 위해, 집은 후 바로 BUCKET_POS로 이동합니다.
-        
-# #         # 집기
-# #         pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
-# #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# #         mwait()
-# #         movel(target_pos, vel=VELOCITY/2, acc=ACC/2)
-# #         mwait()
-# #         gripper.close_gripper()
-# #         time.sleep(1)
-# #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# #         mwait()
-
-# #         # 놓기 (고정된 위치)
-# #         self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
-# #         movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
-# #         mwait()
-# #         gripper.open_gripper()
-# #         time.sleep(1)
-
-
-# # def main(args=None):
-# #     node = RobotController()
-# #     # 메인 루프: rclpy.ok()가 참인 동안 계속 실행
-# #     while rclpy.ok():
-# #         # spin_once를 호출하여 콜백 처리 (논블로킹)
-# #         rclpy.spin_once(node, timeout_sec=0.1)
-# #         # 로봇 제어 로직 실행
-# #         node.robot_control()
-
-# #     node.destroy_node()
-# #     rclpy.shutdown()
-
-
-# # if __name__ == "__main__":
-# #     main()
-# # import os
-# # import time
-# # import sys
-# # from scipy.spatial.transform import Rotation
-# # import numpy as np
-# # import rclpy
-# # from rclpy.node import Node
-# # from rclpy.qos import QoSProfile
-# # import DR_init
-# # from collections import Counter, deque
-
-# # from od_msg.srv import SrvDepthPosition
-# # from ament_index_python.packages import get_package_share_directory
-# # from burger.onrobot import RG
-# # from order_interfaces.msg import Order
-
-# # package_path = get_package_share_directory("burger")
-
-# # # --- [수정된 부분 1] ---
-# # # [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# # # 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-# # ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# # # ----------------------
-
-# # # for single robot
-# # ROBOT_ID = "dsr01"
-# # ROBOT_MODEL = "m0609"
-# # VELOCITY, ACC = 60, 60
-# # BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-
-# # DR_init.__dsr__id = ROBOT_ID
-# # DR_init.__dsr__model = ROBOT_MODEL
-
-# # rclpy.init()
-# # dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
-# # DR_init.__dsr__node = dsr_node
-
-# # try:
-# #     from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans
-# # except ImportError as e:
-# #     print(f"Error importing DSR_ROBOT2: {e}")
-# #     sys.exit()
-
-# # ########### Gripper Setup. Do not modify this area ############
-
-# # GRIPPER_NAME = "rg2"
-# # TOOLCHANGER_IP = "192.168.1.1"
-# # TOOLCHANGER_PORT = "502"
-# # gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
-
-
-# # ########### Robot Controller ############
-
-
-# # class RobotController(Node):
-# #     def __init__(self):
-# #         super().__init__("pick_and_place_integrated")
-
-# #         # 메뉴 DB와 재료 이름 매핑
-# #         self.menu_db = {
-# #             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
-# #             "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
-# #             "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
-# #         }
-# #         self.ingredient_map_korean_to_yolo = {
-# #             "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce",
-# #             "토마토": "tomato", "새우": "shrimp", "번": "bun_bottom"
-# #         }
-        
-# #         # ROS 토픽에서 받은 주문을 저장할 큐
-# #         self.order_queue = deque(maxlen=1)
-
-# #         self.init_robot()
-# #         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
-# #         while not self.depth_client.wait_for_service(timeout_sec=3.0):
-# #             self.get_logger().info("Waiting for depth position service...")
-# #         self.depth_request = SrvDepthPosition.Request()
-
-# #         # /cmd 토픽 구독자 설정
-# #         self.order_subscription = self.create_subscription(
-# #             Order, '/cmd', self.order_callback, QoSProfile(depth=10)
-# #         )
-# #         self.get_logger().info("Integrated Robot Controller is running.")
-
-# #     def order_callback(self, msg):
-# #         """ /cmd 토픽 메시지를 받으면 큐에 추가 """
-# #         self.get_logger().info("New order received, adding to queue.")
-# #         self.order_queue.append(msg)
-
-# #     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
-# #         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
-# #         T = np.eye(4)
-# #         T[:3, :3] = R
-# #         T[:3, 3] = [x, y, z]
-# #         return T
-
-# #     def transform_to_base(self, camera_coords, gripper2cam_path, robot_pos):
-# #         gripper2cam = np.load(gripper2cam_path)
-# #         coord = np.append(np.array(camera_coords), 1)
-# #         x, y, z, rx, ry, rz = robot_pos
-# #         base2gripper = self.get_robot_pose_matrix(x, y, z, rx, ry, rz)
-# #         base2cam = base2gripper @ gripper2cam
-# #         td_coord = np.dot(base2cam, coord)
-# #         return td_coord[:3]
-
-# #     def robot_control(self):
-# #         # 큐에 처리할 주문이 없으면 아무것도 하지 않고 반환
-# #         if not self.order_queue:
-# #             return
-
-# #         # 큐에서 주문을 하나 꺼냄
-# #         order = self.order_queue.popleft()
-# #         self.get_logger().info(f"Processing order: {order.notes}")
-
-# #         # 주문에 포함된 모든 버거를 순서대로 조립
-# #         for burger in order.burgers:
-# #             self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
-            
-# #             # 조립할 재료 목록 생성
-# #             base_ingredients = self.menu_db.get(burger.menu_name, [])
-# #             ingredient_counts = Counter(base_ingredients)
-# #             for option in burger.options:
-# #                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
-# #                 if yolo_item:
-# #                     if option.type == 'add':
-# #                         ingredient_counts[yolo_item] += option.amount
-# #                     elif option.type == 'remove':
-# #                         ingredient_counts[yolo_item] = max(0, ingredient_counts[yolo_item] - option.amount)
-            
-# #             final_assembly_list = []
-# #             for item in base_ingredients:
-# #                  count = ingredient_counts.pop(item, 0)
-# #                  if count > 0:
-# #                     final_assembly_list.extend([item] * count)
-# #             for item, count in ingredient_counts.items():
-# #                 if count > 0:
-# #                     final_assembly_list.extend([item] * count)
-
-# #             self.get_logger().info(f"Assembly list: {final_assembly_list}")
-
-# #             # 각 재료를 순서대로 집어서 놓기
-# #             for ingredient_name in final_assembly_list:
-# #                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-                
-# #                 # 원본 코드의 로직을 재사용하여 재료 하나를 처리
-# #                 self.depth_request.target = ingredient_name
-                
-# #                 # 서비스 호출 및 결과 대기 (spin_until_future_complete는 블로킹 방식)
-# #                 self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
-# #                 depth_future = self.depth_client.call_async(self.depth_request)
-# #                 rclpy.spin_until_future_complete(self, depth_future)
-
-# #                 if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
-# #                     self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
-# #                     continue
-
-# #                 result = depth_future.result().depth_position.tolist()
-# #                 self.get_logger().info(f"Received depth position: {result}")
-
-# #                 gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-# #                 robot_posx = get_current_posx()[0]
-# #                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
-
-# #                 td_coord[2] += 50  # DEPTH_OFFSET
-# #                 td_coord[2] = max(td_coord[2], 2)  # MIN_DEPTH
-
-# #                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-
-# #                 self.get_logger().info(f"Target position: {target_pos}")
-# #                 self.pick_and_place_target(target_pos)
-# #                 self.init_robot()
-            
-# #             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
-
-
-# #     def init_robot(self):
-# #         JReady = [0, 0, 90, 0, 90, 0]
-# #         movej(JReady, vel=VELOCITY, acc=ACC)
-# #         gripper.open_gripper()
-# #         mwait()
-
-# #     def pick_and_place_target(self, target_pos):
-# #         # 이 함수는 하나의 재료를 집어서 고정된 위치(BUCKET_POS)에 놓는 동작을 가정합니다.
-# #         # 간단한 시연을 위해, 집은 후 바로 BUCKET_POS로 이동합니다.
-        
-# #         # 집기
-# #         pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
-# #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# #         mwait()
-# #         movel(target_pos, vel=VELOCITY/2, acc=ACC/2)
-# #         mwait()
-# #         gripper.close_gripper()
-# #         time.sleep(1)
-# #         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-# #         mwait()
-
-# #         # 놓기 (고정된 위치)
-# #         self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
-# #         movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
-# #         mwait()
-# #         gripper.open_gripper()
-# #         time.sleep(1)
-
-
-# # def main(args=None):
-# #     node = RobotController()
-# #     # 메인 루프: rclpy.ok()가 참인 동안 계속 실행
-# #     while rclpy.ok():
-# #         # spin_once를 호출하여 콜백 처리 (논블로킹)
-# #         rclpy.spin_once(node, timeout_sec=0.1)
-# #         # 로봇 제어 로직 실행
-# #         node.robot_control()
-
-# #     node.destroy_node()
-# #     rclpy.shutdown()
-
-
-# # if __name__ == "__main__":
-# #     main()
-# import os
-# import time
-# import sys
-# from scipy.spatial.transform import Rotation
-# import numpy as np
-# import rclpy
-# from rclpy.node import Node
-# from rclpy.qos import QoSProfile
-# import DR_init
-# from collections import Counter, deque
-
-# from od_msg.srv import SrvDepthPosition
-# from ament_index_python.packages import get_package_share_directory
-# from burger.onrobot import RG
-# from order_interfaces.msg import Order
-
-# package_path = get_package_share_directory("burger")
-
-# # --- [수정된 부분 1] ---
-# # [주의] 아래 목록은 학습된 YOLO 모델의 클래스 이름과 정확히 일치해야 합니다.
-# # 모델에 있는 실제 클래스 이름으로 수정해주세요. 예: 'patty', 'lettuce', 'tomato' 등
-# ingredient_dict = {1: "bun_bottom", 2: "bun_top", 3: "cheese", 4: "lettuce", 5: "onion", 6: "patty", 7: "shrimp", 8: "tomato"}
-# # ----------------------
-
-# # for single robot
-# ROBOT_ID = "dsr01"
-# ROBOT_MODEL = "m0609"
-# VELOCITY, ACC = 60, 60
-# BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
-
-# DR_init.__dsr__id = ROBOT_ID
-# DR_init.__dsr__model = ROBOT_MODEL
-
-# rclpy.init()
-# dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
-# DR_init.__dsr__node = dsr_node
-
-# try:
-#     from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans
-# except ImportError as e:
-#     print(f"Error importing DSR_ROBOT2: {e}")
-#     sys.exit()
-
-# ########### Gripper Setup. Do not modify this area ############
-
-# GRIPPER_NAME = "rg2"
-# TOOLCHANGER_IP = "192.168.1.1"
-# TOOLCHANGER_PORT = "502"
-# gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
-
-
-# ########### Robot Controller ############
-
-
-# class RobotController(Node):
-#     def __init__(self):
-#         super().__init__("pick_and_place_integrated")
-
-#         # 메뉴 DB와 재료 이름 매핑
-#         self.menu_db = {
-#             "불고기버거": ["bun_bottom", "patty", "lettuce", "tomato", "bun_top"],
-#             "치즈버거": ["bun_bottom", "patty", "cheese", "bun_top"],
-#             "새우버거": ["bun_bottom", "shrimp", "lettuce", "bun_top"],
-#         }
-#         self.ingredient_map_korean_to_yolo = {
-#             "빵": "bun_bottom", "불고기": "patty", "치즈": "cheese", "상추": "lettuce",
-#             "토마토": "tomato", "새우": "shrimp", "번": "bun_bottom"
-#         }
-        
-#         # ROS 토픽에서 받은 주문을 저장할 큐
-#         self.order_queue = deque(maxlen=1)
-
-#         self.init_robot()
-#         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
-#         while not self.depth_client.wait_for_service(timeout_sec=3.0):
-#             self.get_logger().info("Waiting for depth position service...")
-#         self.depth_request = SrvDepthPosition.Request()
-
-#         # /cmd 토픽 구독자 설정
-#         self.order_subscription = self.create_subscription(
-#             Order, '/cmd', self.order_callback, QoSProfile(depth=10)
-#         )
-#         self.get_logger().info("Integrated Robot Controller is running.")
-
-#     def order_callback(self, msg):
-#         """ /cmd 토픽 메시지를 받으면 큐에 추가 """
-#         self.get_logger().info("New order received, adding to queue.")
-#         self.order_queue.append(msg)
-
-#     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
-#         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
-#         T = np.eye(4)
-#         T[:3, :3] = R
-#         T[:3, 3] = [x, y, z]
-#         return T
-
-#     def transform_to_base(self, camera_coords, gripper2cam_path, robot_pos):
-#         gripper2cam = np.load(gripper2cam_path)
-#         coord = np.append(np.array(camera_coords), 1)
-#         x, y, z, rx, ry, rz = robot_pos
-#         base2gripper = self.get_robot_pose_matrix(x, y, z, rx, ry, rz)
-#         base2cam = base2gripper @ gripper2cam
-#         td_coord = np.dot(base2cam, coord)
-#         return td_coord[:3]
-
-#     def robot_control(self):
-#         # 큐에 처리할 주문이 없으면 아무것도 하지 않고 반환
-#         if not self.order_queue:
-#             return
-
-#         # 큐에서 주문을 하나 꺼냄
-#         order = self.order_queue.popleft()
-#         self.get_logger().info(f"Processing order: {order.notes}")
-
-#         # 주문에 포함된 모든 버거를 순서대로 조립
-#         for burger in order.burgers:
-#             self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
-            
-#             # --- 수정된 옵션 처리 로직 ---
-#             # -----------------------------
-#             # 조립 리스트 생성 로직 (완전 수정본)
-#             # -----------------------------
-
-#             # 기본 재료 구성 생성 (menu_name 기반)
-#             base_ingredients = list(self.menu_db.get(burger.menu_name, []))
-#             final_assembly_list = base_ingredients.copy()
-
-#             # 옵션 처리
-#             ingredient_counts = Counter(final_assembly_list)
-
-#             for option in burger.options:
-#                 self.get_logger().info(f"[DEBUG] option.item={option.item}, option.type={option.type}, option.amount={option.amount}")
-#                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
-
-#                 if not yolo_item:
-#                     continue
-
-#                 if option.type == 'add':
-#                     ingredient_counts[yolo_item] += option.amount
-
-#                 elif option.type == 'remove':
-#                     ingredient_counts[yolo_item] = max(0, ingredient_counts[yolo_item] - option.amount)
-
-#             # 재조합
-#             final_assembly_list = []
-#             for item, count in ingredient_counts.items():
-#                 final_assembly_list.extend([item] * count)
-
-#             self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
-
-#             # 각 재료를 순서대로 집어서 놓기
-#             for ingredient_name in final_assembly_list:
-#                 self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-                
-#                 # 원본 코드의 로직을 재사용하여 재료 하나를 처리
-#                 self.depth_request.target = ingredient_name
-                
-#                 # 서비스 호출 및 결과 대기 (spin_until_future_complete는 블로킹 방식)
-#                 self.get_logger().info(f"Calling depth service for '{ingredient_name}'")
-#                 depth_future = self.depth_client.call_async(self.depth_request)
-#                 rclpy.spin_until_future_complete(self, depth_future)
-
-#                 if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
-#                     self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
-#                     continue
-
-#                 result = depth_future.result().depth_position.tolist()
-#                 self.get_logger().info(f"Received depth position: {result}")
-
-#                 gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-#                 robot_posx = get_current_posx()[0]
-#                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
-
-#                 td_coord[2] += 50  # DEPTH_OFFSET
-#                 td_coord[2] = max(td_coord[2], 2)  # MIN_DEPTH
-
-#                 target_pos = list(td_coord[:3]) + robot_posx[3:]
-
-#                 self.get_logger().info(f"Target position: {target_pos}")
-#                 self.pick_and_place_target(target_pos)
-#                 self.init_robot()
-            
-#             self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
-
-
-#     def init_robot(self):
-#         JReady = [0, 0, 90, 0, 90, 0]
-#         movej(JReady, vel=VELOCITY, acc=ACC)
-#         gripper.open_gripper()
-#         mwait()
-
-#     def pick_and_place_target(self, target_pos):
-#         # 이 함수는 하나의 재료를 집어서 고정된 위치(BUCKET_POS)에 놓는 동작을 가정합니다.
-#         # 간단한 시연을 위해, 집은 후 바로 BUCKET_POS로 이동합니다.
-        
-#         # 집기
-#         pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
-#         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-#         mwait()
-#         movel(target_pos, vel=VELOCITY/2, acc=ACC/2)
-#         mwait()
-#         gripper.close_gripper()
-#         time.sleep(1)
-#         movel(pick_pos_above, vel=VELOCITY, acc=ACC)
-#         mwait()
-
-#         # 놓기 (고정된 위치)
-#         self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
-#         movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
-#         mwait()
-#         gripper.open_gripper()
-#         time.sleep(1)
-
-
-# def main(args=None):
-#     node = RobotController()
-#     # 메인 루프: rclpy.ok()가 참인 동안 계속 실행
-#     while rclpy.ok():
-#         # spin_once를 호출하여 콜백 처리 (논블로킹)
-#         rclpy.spin_once(node, timeout_sec=0.1)
-#         # 로봇 제어 로직 실행
-#         node.robot_control()
-
-#     node.destroy_node()
-#     rclpy.shutdown()
-
-
-# if __name__ == "__main__":
-#     main()
 import os
 import time
 import sys
@@ -913,24 +15,18 @@ from ament_index_python.packages import get_package_share_directory
 from burger.onrobot import RG
 from order_interfaces.msg import Order
 
-package_path = get_package_share_directory("burger")
+import cv2
+import cv2.aruco as aruco
 
-# YOLO 클래스 ID 매핑
-ingredient_dict = {
-    1: "bun_bottom",
-    2: "bun_top",
-    3: "cheese",
-    4: "lettuce",
-    5: "onion",
-    6: "patty",
-    7: "shrimp",
-    8: "tomato",
-}
+package_path = get_package_share_directory("burger")
 
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
-BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
+
+BUCKET_POS = [545.5, -242.6, 174.4, 156.4, 180.0, -112.5]
+COUNTER_POS = [215, 250, 5, 105, 180, 105]
+INGREDIENT_THICKNESS = 20.0
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -940,7 +36,7 @@ dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
 DR_init.__dsr__node = dsr_node
 
 try:
-    from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans
+    from DSR_ROBOT2 import movej, movel, get_current_posx, get_current_posj, mwait, trans
 except ImportError as e:
     print(f"Error importing DSR_ROBOT2: {e}")
     sys.exit()
@@ -955,44 +51,52 @@ TOOLCHANGER_PORT = "502"
 gripper = RG(GRIPPER_NAME, TOOLCHANGER_IP, TOOLCHANGER_PORT)
 
 
-# ================================
-#     ROBOT CONTROLLER CLASS
-# ================================
+########### Robot Controller ############
+
 class RobotController(Node):
     def __init__(self):
         super().__init__("pick_and_place_integrated")
 
         # 중앙 설정 파일(recipes.yaml) 로드
         try:
-            package_share_directory = os.path.expanduser("/home/changbeom/ros2_ws/src/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            package_share_directory = os.path.expanduser(
+                "/home/changbeom/ros2_ws/src/DoosanBootcamp3rd/dsr_rokey/burger/burger"
+            )
             config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
-            
+
             with open(config_path, 'r') as file:
                 config = yaml.safe_load(file)
-            
-            # YAML 파일에서 레시피 정보 로드
-            korean_menu_db = config['menu_db'] 
+
+            korean_menu_db = config['menu_db']
             self.ingredient_map_korean_to_yolo = config['ingredient_map_korean_to_yolo']
 
-            # 로봇이 사용할 영문(YOLO) 레시피 DB를 동적으로 생성
             self.menu_db = {}
             for menu_name, ingredients in korean_menu_db.items():
-                self.menu_db[menu_name] = [self.ingredient_map_korean_to_yolo.get(item, item) for item in ingredients]
+                self.menu_db[menu_name] = [
+                    self.ingredient_map_korean_to_yolo.get(item, item)
+                    for item in ingredients
+                ]
 
-            self.get_logger().info(f"Successfully loaded recipes from {config_path}")
+            self.get_logger().info(f"Successfully loaded recipes.")
 
-        except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
-            self.get_logger().fatal(f"Failed to load or parse recipes.yaml: {e}")
+        except Exception as e:
+            self.get_logger().fatal(f"Failed to load recipes: {e}")
             raise e
 
         self.order_queue = deque(maxlen=1)
-
         self.init_robot()
 
+        # YOLO 기반 3D 좌표 서비스
         self.depth_client = self.create_client(SrvDepthPosition, "/get_3d_position")
         while not self.depth_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("Waiting for depth position service...")
         self.depth_request = SrvDepthPosition.Request()
+
+        # ArUco 마커 서비스
+        self.marker_client = self.create_client(SrvDepthPosition, "/get_marker_position")
+        while not self.marker_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().info("Waiting for marker position service...")
+        self.marker_request = SrvDepthPosition.Request()
 
         self.order_subscription = self.create_subscription(
             Order, "/cmd", self.order_callback, QoSProfile(depth=10)
@@ -1000,10 +104,12 @@ class RobotController(Node):
 
         self.get_logger().info("Integrated Robot Controller is running.")
 
+
+    ### 주문 콜백 ###
     def order_callback(self, msg):
-        self.get_logger().info("New order received, adding to queue.")
         self.order_queue.append(msg)
 
+    ### Pose 변환 ###
     def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
         R = Rotation.from_euler("ZYZ", [rx, ry, rz], degrees=True).as_matrix()
         T = np.eye(4)
@@ -1020,82 +126,286 @@ class RobotController(Node):
         td_coord = np.dot(base2cam, coord)
         return td_coord[:3]
 
+
     # ====================================
-    #      MAIN ORDER PROCESSING LOGIC
+    #     SWEEP FOR BOX MARKERS
     # ====================================
+    def sweep_find_marked_box(
+        self, x=600.0, y_min=-100.0, y_max=100.0, y_step=50.0,
+        z=200.0, rx=105.0, ry=180.0, rz=105.0, candidate_ids=None):
+
+        if candidate_ids is None:
+            candidate_ids = [0, 1, 2, 3, 4, 5]
+
+        detected_ids = []
+
+        y = y_min
+        while y <= y_max:
+            target_pose = [x, y, z, rx, ry, rz]
+            movel(target_pose, vel=VELOCITY, acc=ACC)
+            mwait()
+            time.sleep(0.5)
+
+            for mid in candidate_ids:
+                self.marker_request.target = str(mid)
+                future = self.marker_client.call_async(self.marker_request)
+                rclpy.spin_until_future_complete(self, future)
+                if not future.result():
+                    continue
+
+                cam_xyz = future.result().depth_position
+                if len(cam_xyz) == 3 and sum(cam_xyz) != 0.0:
+                    detected_ids.append(mid)
+
+            if detected_ids:
+                break
+
+            y += y_step
+
+        return detected_ids
+
+
+    # ====================================
+    #  박스 1개를 카운터로 옮기는 함수
+    # ====================================
+    def move_to_marker(self, marker_id: int, counter_pos=None):
+
+        # 1) 마커 좌표 읽기
+        self.marker_request.target = str(marker_id)
+        future = self.marker_client.call_async(self.marker_request)
+        rclpy.spin_until_future_complete(self, future)
+        if not future.result():
+            return
+
+        cam_xyz = future.result().depth_position
+
+        if len(cam_xyz) != 3 or sum(cam_xyz) == 0.0:
+            self.get_logger().warn("Invalid marker position received")
+            return
+
+        robot_posx = get_current_posx()[0]
+        gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
+
+        # 2) transform
+        base_xyz = self.transform_to_base(cam_xyz, gripper2cam_path, robot_posx)
+        bx, by, bz = base_xyz
+
+        # 박스 픽업 offset
+        bx -= 50
+        bz += 50
+
+        target_pos = [bx, by, bz, robot_posx[3], robot_posx[4], robot_posx[5]]
+
+        # counter pos offset
+        counter_box_pos = counter_pos.copy()
+        counter_box_pos[0] -= 65
+        counter_box_pos[2] += 50
+
+        # 박스 픽업 → counter_pos로 옮김
+        self.pick_and_place_target(target_pos, width_val=0, counter_pos=counter_box_pos)
+
+        self.init_robot()
+
+
+    # ====================================
+    #        🔥 핵심: 전체 로직 재구성
+    # ====================================
+    def flip_raw_patty(self):
+        """
+        Finds a raw patty at the bucket position, picks it up, flips it in place, and sets it back down.
+        """
+        self.get_logger().info("Attempting to flip a raw patty.")
+        # 1. Move to the bucket position to get a clear view
+        movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
+        mwait()
+        time.sleep(0.5)
+
+        # 2. Detect 'raw_patty'
+        self.depth_request.target = 'raw_patty'
+        future = self.depth_client.call_async(self.depth_request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if not future.result() or sum(future.result().depth_position) == 0.0:
+            self.get_logger().warn("No 'raw_patty' found to flip. Continuing with order.")
+            self.init_robot()
+            return
+
+        cam_xyz = future.result().depth_position
+        robot_posx = get_current_posx()[0]
+        gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
+
+        # 3. Transform coordinates and define target position
+        base_xyz = self.transform_to_base(cam_xyz, gripper2cam_path, robot_posx)
+        td_coord = list(base_xyz[:3])
+        td_coord[0] -= 13  # X-축 오프셋
+        td_coord[1] -= 3
+        td_coord[2] -= 10
+        
+        # Create a clean 45-degree tilt orientation
+        # By setting the final Z-rotation (rz) to 0, we avoid a 'skewed' tilt.
+        fixed_rx = 0.0
+        fixed_ry = 135.0  # 180도에서 45도 뺀 값 (상황에 따라 225도가 될 수도 있음)
+        fixed_rz = 90.0    # 그리퍼를 정면으로 정렬
+        extra=20
+        target_pos = td_coord + [fixed_rx, fixed_ry-extra, fixed_rz]
+
+        # 4. Execute Pick-Flip-Place Sequence
+        # 4.1. Pick up the patty
+        pick_pos_above = target_pos.copy()
+        pick_pos_above[2] += 100.0
+
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+        movel(target_pos, vel=VELOCITY / 3, acc=ACC / 3)
+        mwait()
+        gripper.move_gripper(600, force_val=100) # Grip the patty
+        time.sleep(2)
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+        # ⭐ pick 이후 20도 추가 기울이기
+        # j_now = get_current_posj()
+        # j_tilt_more = list(j_now)
+        # j_tilt_more[3] += 20.0  # J5 증가 기울기
+        # movej(j_tilt_more, vel=VELOCITY, acc=ACC)
+        # mwait()
+
+
+        # 4.2. Flip the patty
+        # By performing a joint move on J6 (wrist roll), we can flip the patty.
+        pos_before_flip = get_current_posx()[0]
+        j_before_flip = get_current_posj()
+        
+        j_after_flip = list(j_before_flip)
+        j_after_flip[5] += 180.0 # Add 180 degrees to J6 (wrist roll)
+        
+        movej(j_after_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
+        mwait()
+
+        pos_after_flip = get_current_posx()[0]
+
+        # 4.3. Place the patty back
+        # Use the new orientation with the original XY position.
+        place_pos_flipped = target_pos.copy()
+        place_pos_flipped[3:] = pos_after_flip[3:]
+        
+        # Also need to account for the TCP's XYZ displacement caused by the joint move.
+        xyz_displacement = np.array(pos_after_flip[:3]) - np.array(pos_before_flip[:3])
+        place_pos_flipped[:3] = np.array(target_pos[:3]) - xyz_displacement
+
+        place_pos_flipped_above = place_pos_flipped.copy()
+        place_pos_flipped_above[2] += 10.0
+
+        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
+        # mwait()
+        movel(place_pos_flipped_above, vel=VELOCITY / 3, acc=ACC / 3)
+        mwait()
+
+        gripper.move_gripper(750) # Release the patty
+        time.sleep(1)
+        movej([0,0,90,0,90,0],vel=VELOCITY, acc=ACC)
+        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
+        # mwait()
+        # ⭐ 여기서 orientation 완전 복귀
+        # movej(j_before_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
+        # mwait()
+        self.get_logger().info("Raw patty has been flipped.")
+        # self.init_robot()
+
     def robot_control(self):
         if not self.order_queue:
             return
 
         order = self.order_queue.popleft()
-        self.get_logger().info(f"Processing order: {order.notes}")
+        burgers = order.burgers
+        num_burgers = len(burgers)
 
-        for burger in order.burgers:
-            self.get_logger().info(f"--- Making a '{burger.menu_name}' ---")
+        # ================================
+        #   NEW (0): 원육 뒤집기
+        # ================================
+        self.flip_raw_patty()
 
-            # ====================================
-            #   🔥 핵심 수정 — 옵션을 bun_top 앞에 삽입
-            # ====================================
-            final_assembly_list = list(self.menu_db.get(burger.menu_name, []))
+        # ================================
+        #   1) 주문 수량만큼 박스를 먼저 전부 배치
+        # ================================
+        box_positions = []
 
+        for i in range(num_burgers):
+            counter_pos_i = COUNTER_POS.copy()
+            counter_pos_i[0] += i * 200.0
+
+            marker_ids = self.sweep_find_marked_box(
+                x=600.0, y_min=-200.0, y_max=100.0, y_step=50.0,
+                z=150.0, rx=105.0, ry=180.0, rz=105.0
+            )
+
+            if not marker_ids:
+                self.get_logger().warn("더 이상 사용할 박스가 없습니다.")
+                break
+
+            marker = marker_ids[0]
+
+            self.move_to_marker(marker, counter_pos=counter_pos_i)
+
+            box_positions.append(counter_pos_i.copy())
+
+        if len(box_positions) != num_burgers:
+            return
+
+        # ================================
+        #   2) 각 박스 위에 각 버거 재료 쌓기
+        # ================================
+        for b_idx, burger in enumerate(burgers):
+            final_list = list(self.menu_db[burger.menu_name])
+
+            # 옵션 처리
             for option in burger.options:
-                self.get_logger().info(
-                    f"[DEBUG] option.item={option.item}, type={option.type}, amount={option.amount}"
-                )
-
                 yolo_item = self.ingredient_map_korean_to_yolo.get(option.item)
                 if not yolo_item:
                     continue
 
-                # ADD 옵션 : bun_top 바로 앞에 삽입
                 if option.type == "add":
                     for _ in range(option.amount):
-                        if "bun_top" in final_assembly_list:
-                            idx = final_assembly_list.index("bun_top")
-                            final_assembly_list.insert(idx, yolo_item)
+                        if "bun_top" in final_list:
+                            idx_bt = final_list.index("bun_top")
+                            final_list.insert(idx_bt, yolo_item)
                         else:
-                            final_assembly_list.append(yolo_item)
+                            final_list.append(yolo_item)
 
-                # REMOVE 옵션
                 elif option.type == "remove":
                     for _ in range(option.amount):
-                        if yolo_item in final_assembly_list:
-                            final_assembly_list.remove(yolo_item)
+                        if yolo_item in final_list:
+                            final_list.remove(yolo_item)
 
-            self.get_logger().info(f"Final Assembly list: {final_assembly_list}")
+            # 현재 박스 위치
+            base_box_pos = box_positions[b_idx]
 
-            # ====================================
-            #           PICK & PLACE LOOP
-            # ====================================
-            for ingredient_name in final_assembly_list:
-
-                self.get_logger().info(f"--- Picking ingredient: {ingredient_name} ---")
-
-                self.depth_request.target = ingredient_name
+            # 재료 쌓기
+            for layer, ingredient in enumerate(final_list):
+                self.depth_request.target = ingredient
                 depth_future = self.depth_client.call_async(self.depth_request)
                 rclpy.spin_until_future_complete(self, depth_future)
-
-                if not (depth_future.result() and sum(depth_future.result().depth_position) != 0):
-                    self.get_logger().error(f"Could not find '{ingredient_name}'. Skipping.")
+                if not depth_future.result() or sum(depth_future.result().depth_position) == 0:
                     continue
 
                 result = depth_future.result().depth_position.tolist()
-                self.get_logger().info(f"Received depth position: {result}")
+                robot_posx = get_current_posx()[0]
 
                 gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
-                robot_posx = get_current_posx()[0]
                 td_coord = self.transform_to_base(result, gripper2cam_path, robot_posx)
 
-                td_coord[2] += 50
-                td_coord[2] = max(td_coord[2], 2)
+                td_coord[1] -= 15
+                td_coord[2] -= 10
 
                 target_pos = list(td_coord[:3]) + robot_posx[3:]
 
-                self.get_logger().info(f"Target position: {target_pos}")
-                self.pick_and_place_target(target_pos)
+                # 박스 위 층 쌓기
+                place_pos = base_box_pos.copy()
+                place_pos[2] += layer * INGREDIENT_THICKNESS
+
+                self.pick_and_place_target(target_pos, width_val=600, counter_pos=place_pos)
+
                 self.init_robot()
 
-            self.get_logger().info(f"--- Finished '{burger.menu_name}' ---")
 
     # ================================
     #            ROBOT MOVES
@@ -1103,27 +413,43 @@ class RobotController(Node):
     def init_robot(self):
         JReady = [0, 0, 90, 0, 90, 0]
         movej(JReady, vel=VELOCITY, acc=ACC)
-        gripper.open_gripper()
+        gripper.move_gripper(1000)
         mwait()
 
-    def pick_and_place_target(self, target_pos):
-        pick_pos_above = trans(target_pos, [0, 0, 100, 0, 0, 0])
-        movel(pick_pos_above, vel=VELOCITY, acc=ACC)
+    def pick_and_place_target(self, target_pos, width_val, counter_pos=None):
+        if counter_pos is None:
+            counter_pos = COUNTER_POS
+
+        pick_pos_above = target_pos.copy()
+        pick_pos_above[2] += 100.0
+
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
         mwait()
-        movel(target_pos, vel=VELOCITY / 2, acc=ACC / 2)
+
+        movel(target_pos, vel=VELOCITY / 3, acc=ACC / 3)
         mwait()
-        gripper.close_gripper()
+
+        gripper.move_gripper(width_val, force_val=100)
+        time.sleep(3)
+
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+
+        place_pos_above = counter_pos.copy()
+        place_pos_above[2] += 100.0
+
+        movel(place_pos_above, vel=VELOCITY, acc=ACC)
+        mwait()
+
+        movel(counter_pos, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+
+        gripper.move_gripper(750)
         time.sleep(1)
-        movel(pick_pos_above, vel=VELOCITY, acc=ACC)
+
+        movel(place_pos_above, vel=VELOCITY, acc=ACC)
         mwait()
-
-        self.get_logger().info(f"Placing ingredient at BUCKET_POS: {BUCKET_POS}")
-        movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
-        mwait()
-        gripper.open_gripper()
-        time.sleep(1)
-
-
+        
 # ================================
 #            MAIN LOOP
 # ================================
