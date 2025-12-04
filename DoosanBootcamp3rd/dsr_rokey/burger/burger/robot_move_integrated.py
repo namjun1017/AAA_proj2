@@ -22,22 +22,11 @@ import cv2.aruco as aruco
 
 package_path = get_package_share_directory("burger")
 
-# YOLO 클래스 ID 매핑
-ingredient_dict = {
-    1: "bun_bottom",
-    2: "bun_top",
-    3: "cheese",
-    4: "lettuce",
-    5: "onion",
-    6: "patty",
-    7: "shrimp",
-    8: "tomato",
-}
-
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 VELOCITY, ACC = 60, 60
-BUCKET_POS = [445.5, -242.6, 174.4, 156.4, 180.0, -112.5]
+
+BUCKET_POS = [545.5, -242.6, 174.4, 156.4, 180.0, -112.5]
 COUNTER_POS = [215, 250, 5, 105, 180, 105]
 INGREDIENT_THICKNESS = 20.0
 
@@ -49,7 +38,7 @@ dsr_node = rclpy.create_node("rokey_simple_move", namespace=ROBOT_ID)
 DR_init.__dsr__node = dsr_node
 
 try:
-    from DSR_ROBOT2 import movej, movel, get_current_posx, mwait, trans, DR_MV_MOD_REL
+    from DSR_ROBOT2 import movej, movel, get_current_posx, get_current_posj, mwait, trans, trans, DR_MV_MOD_REL
 except ImportError as e:
     print(f"Error importing DSR_ROBOT2: {e}")
     sys.exit()
@@ -109,8 +98,26 @@ class RobotController(Node):
             "번": "bun_bottom",
         }
 
-        self.order_queue = deque(maxlen=1)
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
 
+            korean_menu_db = config['menu_db']
+            self.ingredient_map_korean_to_yolo = config['ingredient_map_korean_to_yolo']
+
+            self.menu_db = {}
+            for menu_name, ingredients in korean_menu_db.items():
+                self.menu_db[menu_name] = [
+                    self.ingredient_map_korean_to_yolo.get(item, item)
+                    for item in ingredients
+                ]
+
+            self.get_logger().info(f"Successfully loaded recipes.")
+
+        except Exception as e:
+            self.get_logger().fatal(f"Failed to load recipes: {e}")
+            raise e
+
+        self.order_queue = deque(maxlen=1)
         self.init_robot()
 
         # YOLO 기반 3D 좌표 서비스
@@ -119,13 +126,12 @@ class RobotController(Node):
             self.get_logger().info("Waiting for depth position service...")
         self.depth_request = SrvDepthPosition.Request()
 
-        # ArUco 마커 3D 좌표 서비스
+        # ArUco 마커 서비스
         self.marker_client = self.create_client(SrvDepthPosition, "/get_marker_position")
         while not self.marker_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().info("Waiting for marker position service...")
         self.marker_request = SrvDepthPosition.Request()
 
-        # /cmd 토픽 구독
         self.order_subscription = self.create_subscription(
             Order, "/cmd", self.order_callback, QoSProfile(depth=10)
         )
@@ -134,7 +140,6 @@ class RobotController(Node):
 
     ### 주문 콜백 ###
     def order_callback(self, msg):
-        self.get_logger().info("New order received, adding to queue.")
         self.order_queue.append(msg)
 
     ### Pose 변환 ###
@@ -405,13 +410,10 @@ class RobotController(Node):
         self.marker_request.target = str(marker_id)
         future = self.marker_client.call_async(self.marker_request)
         rclpy.spin_until_future_complete(self, future)
-
         if not future.result():
-            self.get_logger().error("Marker service call failed")
             return
 
         cam_xyz = future.result().depth_position
-        self.get_logger().info(f"[DEBUG] cam_xyz (camera coords): {list(cam_xyz)}")
 
         if len(cam_xyz) != 3 or sum(cam_xyz) == 0.0:
             self.get_logger().warn("Invalid marker position received")
@@ -446,8 +448,109 @@ class RobotController(Node):
         # 박스를 counter_pos로 옮김
         self.pick_and_place_target(target_pos,1, width_val=0, counter_positions= counter_info)
 
+    # ====================================
+    #        🔥 핵심: 전체 로직 재구성
+    # ====================================
+    def flip_raw_patty(self):
+        """
+        Finds a raw patty at the bucket position, picks it up, flips it in place, and sets it back down.
+        """
+        self.get_logger().info("Attempting to flip a raw patty.")
+        # 1. Move to the bucket position to get a clear view
+        movel(BUCKET_POS, vel=VELOCITY, acc=ACC)
         mwait()
-        self.init_robot()
+        time.sleep(0.5)
+
+        # 2. Detect 'raw_patty'
+        self.depth_request.target = 'raw_patty'
+        future = self.depth_client.call_async(self.depth_request)
+        rclpy.spin_until_future_complete(self, future)
+
+        if not future.result() or sum(future.result().depth_position) == 0.0:
+            self.get_logger().warn("No 'raw_patty' found to flip. Continuing with order.")
+            self.init_robot()
+            return
+
+        cam_xyz = future.result().depth_position
+        robot_posx = get_current_posx()[0]
+        gripper2cam_path = os.path.join(package_path, "resource", "T_gripper2camera.npy")
+
+        # 3. Transform coordinates and define target position
+        base_xyz = self.transform_to_base(cam_xyz, gripper2cam_path, robot_posx)
+        td_coord = list(base_xyz[:3])
+        td_coord[0] -= 13  # X-축 오프셋
+        td_coord[1] -= 3
+        td_coord[2] -= 10
+        
+        # Create a clean 45-degree tilt orientation
+        # By setting the final Z-rotation (rz) to 0, we avoid a 'skewed' tilt.
+        fixed_rx = 0.0
+        fixed_ry = 135.0  # 180도에서 45도 뺀 값 (상황에 따라 225도가 될 수도 있음)
+        fixed_rz = 90.0    # 그리퍼를 정면으로 정렬
+        extra=20
+        target_pos = td_coord + [fixed_rx, fixed_ry-extra, fixed_rz]
+
+        # 4. Execute Pick-Flip-Place Sequence
+        # 4.1. Pick up the patty
+        pick_pos_above = target_pos.copy()
+        pick_pos_above[2] += 100.0
+
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+        movel(target_pos, vel=VELOCITY / 3, acc=ACC / 3)
+        mwait()
+        gripper.move_gripper(600, force_val=100) # Grip the patty
+        time.sleep(2)
+        movel(pick_pos_above, vel=VELOCITY / 2, acc=ACC / 2)
+        mwait()
+        # ⭐ pick 이후 20도 추가 기울이기
+        # j_now = get_current_posj()
+        # j_tilt_more = list(j_now)
+        # j_tilt_more[3] += 20.0  # J5 증가 기울기
+        # movej(j_tilt_more, vel=VELOCITY, acc=ACC)
+        # mwait()
+
+
+        # 4.2. Flip the patty
+        # By performing a joint move on J6 (wrist roll), we can flip the patty.
+        pos_before_flip = get_current_posx()[0]
+        j_before_flip = get_current_posj()
+        
+        j_after_flip = list(j_before_flip)
+        j_after_flip[5] += 180.0 # Add 180 degrees to J6 (wrist roll)
+        
+        movej(j_after_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
+        mwait()
+
+        pos_after_flip = get_current_posx()[0]
+
+        # 4.3. Place the patty back
+        # Use the new orientation with the original XY position.
+        place_pos_flipped = target_pos.copy()
+        place_pos_flipped[3:] = pos_after_flip[3:]
+        
+        # Also need to account for the TCP's XYZ displacement caused by the joint move.
+        xyz_displacement = np.array(pos_after_flip[:3]) - np.array(pos_before_flip[:3])
+        place_pos_flipped[:3] = np.array(target_pos[:3]) - xyz_displacement
+
+        place_pos_flipped_above = place_pos_flipped.copy()
+        place_pos_flipped_above[2] += 10.0
+
+        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
+        # mwait()
+        movel(place_pos_flipped_above, vel=VELOCITY / 3, acc=ACC / 3)
+        mwait()
+
+        gripper.move_gripper(750) # Release the patty
+        time.sleep(1)
+        movej([0,0,90,0,90,0],vel=VELOCITY, acc=ACC)
+        # movel(place_pos_flipped_above, vel=VELOCITY / 2, acc=ACC / 2)
+        # mwait()
+        # ⭐ 여기서 orientation 완전 복귀
+        # movej(j_before_flip, vel=VELOCITY*1.5, acc=ACC*1.5)
+        # mwait()
+        self.get_logger().info("Raw patty has been flipped.")
+        # self.init_robot()
 
     def robot_control(self):
         if not self.order_queue:
@@ -455,7 +558,10 @@ class RobotController(Node):
 
         # 1) 주문 꺼내기
         order = self.order_queue.popleft()
-        self.get_logger().info(f"Processing order: {order.notes}")
+        burgers = order.burgers
+        num_burgers = len(burgers)
+        
+        self.flip_raw_patty()
 
         try:
             # 2) final_order 빌드 (버거별 재료 + totals)
@@ -548,7 +654,12 @@ class RobotController(Node):
 
 
 
+        gripper.move_gripper(750)
+        time.sleep(1)
 
+        movel(place_pos_above, vel=VELOCITY, acc=ACC)
+        mwait()
+        
 # ================================
 #            MAIN LOOP
 # ================================
