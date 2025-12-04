@@ -6,7 +6,7 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 
-from pick_and_place_text.realsense import ImgNode
+from burger.realsense import ImgNode
 
 
 def main(args=None):

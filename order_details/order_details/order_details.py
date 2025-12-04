@@ -20,9 +20,9 @@ class OrderDetails(Node):
         super().__init__('order_details')
         # load_dotenv(dotenv_path=".env")
 
-        # 주소는 수정 필요
-        dotenv_path = os.path.expanduser("/home/changbeom/ros2_ws/src/order_details/order_details/.env") 
-        load_dotenv(dotenv_path=dotenv_path)
+        # # 주소는 수정 필요
+        # dotenv_path = os.path.expanduser("/home/changbeom/ros2_ws/src/order_details/order_details/.env") 
+        # load_dotenv(dotenv_path=dotenv_path)
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
@@ -38,7 +38,7 @@ class OrderDetails(Node):
         # 중앙 설정 파일(recipes.yaml) 로드
         try:
             # 'burger' 패키지의 공유 디렉토리 경로를 찾음
-            package_share_directory = os.path.expanduser("/home/changbeom/ros2_ws/src/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
+            package_share_directory = os.path.expanduser("/home/rokey/ros2_ws/src/AAA_proj2/DoosanBootcamp3rd/dsr_rokey/burger/burger") 
             # 설정 파일의 전체 경로 구성
             config_path = os.path.join(package_share_directory, 'config', 'recipes.yaml')
             
@@ -46,7 +46,8 @@ class OrderDetails(Node):
                 config = yaml.safe_load(file)
             
             # YAML 파일에서 메뉴 정보 로드
-            self.menu_db = config['ingredient_map_korean_to_yolo']
+            self.menu_db = config['menu_db']
+            self.integrated = config['ingredient_map_korean_to_yolo']
             self.item_alias = config['item_alias']
             
             self.get_logger().info(f"Successfully loaded recipes from {config_path}")
@@ -58,7 +59,7 @@ class OrderDetails(Node):
 
         # 메뉴 목록을 문자열로 변환하여 프롬프트에 삽입
         menu_lines = "\n".join(
-            f"- {name} : {', '.join(items)}" for name, items in self.menu_db.items()
+            f"- {name} : {', '.join(items)}" for name, items in self.integrated.items()
         )
 
         qos = QoSProfile(depth=1)

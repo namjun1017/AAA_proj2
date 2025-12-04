@@ -156,13 +156,15 @@ class ObjectDetectionNode(Node):
         except IndexError:
             self.get_logger().warn(f"Coordinates ({x},{y}) out of range.")
             return None
-
+        
     def _wait_for_valid_data(self, getter, description):
-        data = getter()
+        data = None
         while data is None or (isinstance(data, np.ndarray) and not data.any()):
-            rclpy.spin_once(self.img_node)
-            self.get_logger().info(f"Retry getting {description}.")
+            # 🔁 항상 spin을 먼저 돌려서 최신 프레임을 받아오게 함
+            rclpy.spin_once(self.img_node, timeout_sec=0.01)
             data = getter()
+            if data is None or (isinstance(data, np.ndarray) and not data.any()):
+                self.get_logger().info(f"Retry getting {description}.")
         return data
 
     def _pixel_to_camera_coords(self, x, y, z):
